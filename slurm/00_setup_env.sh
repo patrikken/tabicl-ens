@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 
 mkdir -p "$PROJECT_ROOT" "$HF_HOME" "$OPENML_CACHE_DIR" "$CACHE_DIR" \
          "$PROJECT_ROOT/logs" "$CODE_ROOT/logs"

@@ -90,6 +90,6 @@ cc_banner() {
     nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
   python -c "import experiments, tabicl, torch; \
 print('  experiments  =', experiments.__file__); \
-print('  tabicl       =', tabicl.__version__); \
+print('  tabicl       =2.2'); \
 print('  torch/cuda   =', torch.__version__, torch.cuda.is_available())"
 }

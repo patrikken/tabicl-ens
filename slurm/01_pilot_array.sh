@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=tfm-ens-pilot
-#SBATCH --account=def-CHANGEME            # <-- your CC allocation (def-/rrg-)
-#SBATCH --gres=gpu:h100:1                 # some clusters want --gpus-per-node=h100:1
+#SBATCH --account=aip-ebrahimi            # <-- your CC allocation (def-/rrg-)
+#SBATCH --gpus-per-node=h100:4                 # some clusters want --gpus-per-node=h100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=03:00:00                   # short jobs schedule far sooner
+#SBATCH --time=00:30:00                   # short jobs schedule far sooner
 #SBATCH --array=0-71%12                   # 8 datasets x 9 coalitions, 12 concurrent
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
@@ -25,13 +25,17 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 cc_banner
 
 DATASETS=(blood-transfusion diabetes credit-g maternal_health_risk \
           MIC students_dropout Bioresponse Amazon_employee_access)
 COALITIONS=(base A1 A2 A3 A1A2 A1A3 A2A3 A1A2A3 shipped)
+
+# set SLURM_ARRAY_TASK_ID
+
+SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-32}  # for testing outside SLURM
 
 N_COAL=${#COALITIONS[@]}
 DATASET=${DATASETS[$(( SLURM_ARRAY_TASK_ID / N_COAL ))]}
