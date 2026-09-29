@@ -66,7 +66,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 VERIFY=""
 if [ "$SLURM_ARRAY_TASK_ID" -eq 0 ]; then VERIFY="--verify"; fi
 
-srun python -m experiments/run_cell.py \
+srun python -m experiments.run_cell \
   --dataset   "$DATASET" \
   --coalition "$COALITION" \
   --n-estimators 32 \
