@@ -150,3 +150,5 @@ venv/
 hf/
 openml/
 *.out
+*.zip
+logs/
