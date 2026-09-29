@@ -3,55 +3,95 @@
 CONTRACT: ``load_splits(name)`` yields ``(X_train, y_train, X_test, y_test)``
 per evaluation split, in a stable order.
 
-Two backends:
+Backends, chosen by ``$SPLIT_BACKEND``:
 
-* ``openml``  (default) - downloads by OpenML ID and makes its own repeated
-  stratified splits. Lets the pilot run immediately, without waiting on the
-  TabArena API.
-* ``tabarena`` - the official splits. REQUIRED for the full campaign: the
-  paper compares against published TabArena numbers, and that comparison is
-  only valid on their splits. Fill in ``_load_tabarena`` before Phase 1.
-
-The OpenML IDs below were transcribed from a secondary source (the dataset
-inventory in arXiv:2605.18696). VERIFY each against the official TabArena
-registry before citing any number produced from them.
+* ``tabarena`` (default for the full campaign) - official TabArena v0.1 splits,
+  read from the manifest written by ``prepare_tabarena.py`` on a login node.
+  Needs only numpy + openml's local cache at run time: the ``tabarena`` package
+  (and its pre-release autogluon + ray stack) is NOT imported here.
+* ``openml`` - the pilot backend: 8 datasets, own stratified splits. Fine for
+  variance/cost questions; NOT comparable to published TabArena numbers.
 """
 
 from __future__ import annotations
 
+import functools
+import json
 import os
+from pathlib import Path
 from typing import Iterator, Tuple
 
 import numpy as np
 
 Split = Tuple[object, object, object, object]
 
-# Pilot set: 8 datasets chosen to span the structural caps of EXPERIMENTS.md §1.3
-# and the cost regimes, not to be representative of TabArena.
-#
-#   name                         openml  n       d      C   why it is here
-PILOT = {
-    "blood-transfusion":         (46913,  748,     5,   2),  # d=5 -> A1 'random' hits the all_perms path
-    "diabetes":                  (46921,  768,     9,   2),  # small binary reference
-    "credit-g":                  (46918, 1000,    21,   2),  # small binary, more columns
-    "maternal_health_risk":      (46941, 1014,     7,   3),  # small multiclass
-    "MIC":                       (46980, 1699,   112,   8),  # C=8 -> A2 has real headroom
-    "students_dropout":          (46960, 4424,    37,   3),  # medium multiclass
-    "Bioresponse":               (46912, 3751,  1777,   2),  # d >> n -> where A4 should matter
-    "Amazon_employee_access":    (46905, 32769,   10,   2),  # large n -> cost scaling
-}
-
+BACKEND = os.environ.get("SPLIT_BACKEND", "tabarena")
+TABARENA_DIR = Path(os.environ.get("TABARENA_DIR", "")) if os.environ.get("TABARENA_DIR") else None
 N_SPLITS = int(os.environ.get("N_SPLITS", "9"))
-BACKEND = os.environ.get("SPLIT_BACKEND", "openml")
+
+# --- pilot set (OpenML backend) ------------------------------------------------
+#   name                      openml  n      d     C
+PILOT = {
+    "blood-transfusion":      (46913,   748,    5, 2),
+    "diabetes":               (46921,   768,    9, 2),
+    "credit-g":               (46918,  1000,   21, 2),
+    "maternal_health_risk":   (46941,  1014,    7, 3),
+    "MIC":                    (46980,  1699,  112, 8),
+    "students_dropout":       (46960,  4424,   37, 3),
+    "Bioresponse":            (46912,  3751, 1777, 2),
+    "Amazon_employee_access": (46905, 32769,   10, 2),
+}
 
 
 def load_splits(name: str) -> Iterator[Split]:
-    if BACKEND == "tabarena":
-        yield from _load_tabarena(name)
-    else:
+    if BACKEND == "openml":
         yield from _load_openml(name)
+    else:
+        yield from _load_tabarena(name)
 
 
+# --- TabArena ------------------------------------------------------------------
+@functools.lru_cache(maxsize=1)
+def _manifest() -> dict:
+    if TABARENA_DIR is None:
+        raise RuntimeError(
+            "TABARENA_DIR is unset. Run prepare_tabarena.py on a login node and "
+            "export TABARENA_DIR=$PROJECT_ROOT/tabarena."
+        )
+    f = TABARENA_DIR / "manifest.json"
+    if not f.exists():
+        raise FileNotFoundError(
+            f"{f} not found. Run:  python -m experiments.prepare_tabarena "
+            f"--out {TABARENA_DIR}   (login node, needs internet)"
+        )
+    return json.loads(f.read_text())
+
+
+def tabarena_datasets() -> list[str]:
+    """Dataset names in the manifest, sorted. Used by the SLURM array."""
+    return sorted(_manifest())
+
+
+def dataset_info(name: str) -> dict:
+    return _manifest()[name]
+
+
+def _load_tabarena(name: str) -> Iterator[Split]:
+    import openml
+
+    info = _manifest()[name]
+    ds = openml.datasets.get_dataset(info["openml_dataset_id"], download_data=True)
+    X, y, _, _ = ds.get_data(target=info["label"], dataset_format="dataframe")
+    y = np.asarray(y)
+
+    z = np.load(TABARENA_DIR / "splits" / f"{name}.npz")
+    for s in info["splits"]:
+        k = s["k"]
+        tr, te = z[f"train_{k}"], z[f"test_{k}"]
+        yield X.iloc[tr], y[tr], X.iloc[te], y[te]
+
+
+# --- OpenML (pilot) ------------------------------------------------------------
 def _load_openml(name: str) -> Iterator[Split]:
     import openml
     from sklearn.model_selection import RepeatedStratifiedKFold
@@ -60,20 +100,6 @@ def _load_openml(name: str) -> Iterator[Split]:
     ds = openml.datasets.get_dataset(did, download_data=True)
     X, y, _, _ = ds.get_data(target=ds.default_target_attribute, dataset_format="dataframe")
     y = np.asarray(y)
-
     cv = RepeatedStratifiedKFold(n_splits=3, n_repeats=max(1, N_SPLITS // 3), random_state=0)
     for tr, te in cv.split(np.zeros(len(y)), y):
         yield X.iloc[tr], y[tr], X.iloc[te], y[te]
-
-
-def _load_tabarena(name: str) -> Iterator[Split]:
-    """Official TabArena splits. REQUIRED for Phase 1 onward.
-
-    TODO: wire to the tabarena / tabrepo API and yield its outer
-    repeat/fold splits in their canonical order. Until then the campaign
-    is not comparable to published TabArena results.
-    """
-    raise NotImplementedError(
-        "TabArena backend not wired. Pilot may run with SPLIT_BACKEND=openml; "
-        "the full campaign may not."
-    )

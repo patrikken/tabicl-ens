@@ -51,6 +51,10 @@ export HF_HOME="${HF_HOME:-$PROJECT_ROOT/hf}"
 export OPENML_CACHE_DIR="${OPENML_CACHE_DIR:-$PROJECT_ROOT/openml}"
 export CACHE_DIR="${CACHE_DIR:-$PROJECT_ROOT/cache}"
 export VENV="${VENV:-$PROJECT_ROOT/venv}"
+# Official TabArena splits, materialised on a login node by
+# experiments/prepare_tabarena.py. The worker reads this instead of
+# importing tabarena (which pulls a pre-release autogluon + ray).
+export TABARENA_DIR="${TABARENA_DIR:-$PROJECT_ROOT/tabarena}"
 
 # Import from the checkout without depending on cwd. This is the actual fix.
 export PYTHONPATH="$CODE_ROOT${PYTHONPATH:+:$PYTHONPATH}"
@@ -90,6 +94,6 @@ cc_banner() {
     nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
   python -c "import experiments, tabicl, torch; \
 print('  experiments  =', experiments.__file__); \
-print('  tabicl       =2.2'); \
+print('  tabicl       =', tabicl.__version__); \
 print('  torch/cuda   =', torch.__version__, torch.cuda.is_available())"
 }

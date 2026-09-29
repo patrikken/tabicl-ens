@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-source "slurm/_common.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 mkdir -p "$PROJECT_ROOT" "$HF_HOME" "$OPENML_CACHE_DIR" "$CACHE_DIR" \
          "$PROJECT_ROOT/logs" "$CODE_ROOT/logs"
@@ -47,6 +47,22 @@ for name, (did, *_) in PILOT.items():
     ds.get_data(target=ds.default_target_attribute, dataset_format="dataframe")
     print(f"  cached {name} (oml {did})")
 PY
+
+echo "--- installing tabarena (LOGIN NODE ONLY, not needed on compute) ---"
+# Pulls a pre-release autogluon.tabular + ray. Heavy, and only ever imported
+# here: prepare_tabarena.py turns the official splits into a portable manifest
+# that the compute-node worker reads with numpy alone.
+pip install "tabarena==0.1.0" || {
+  echo "WARN: tabarena install failed. Resolve before the full campaign;" >&2
+  echo "      the pilot can still run with SPLIT_BACKEND=openml." >&2
+}
+
+echo "--- materialising official TabArena splits ---"
+if python -c "import tabarena" 2>/dev/null; then
+  python -m experiments.prepare_tabarena --out "$TABARENA_DIR"
+else
+  echo "SKIPPED: tabarena not importable."
+fi
 
 echo "--- verifying imports resolve without cwd tricks ---"
 ( cd / && python -c "import experiments.run_cell, tabicl; print('  imports OK')" )
