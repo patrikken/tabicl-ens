@@ -55,7 +55,10 @@ def run_cell(
     device: str | None = None,
 ) -> None:
     kwargs = COALITIONS[coalition]
+    # Two repos now: the upstream clone that produced the numbers, and the
+    # experiment code that orchestrated them. Record both.
     tabicl_sha = _git_sha(os.environ.get("TABICL_REPO", "."))
+    code_sha = _git_sha(os.environ.get("CODE_ROOT", "."))
 
     for k, (X_tr, y_tr, X_te, y_te) in enumerate(load_splits(dataset)):
         cell = out_root / dataset / coalition / f"split{k}"
@@ -109,6 +112,7 @@ def run_cell(
             "seed": seed,
             "checkpoint": CHECKPOINT,
             "tabicl_sha": tabicl_sha,
+            "code_sha": code_sha,
             "fit_seconds": t_fit,
             "predict_seconds": t_pred,
             "seconds_per_member": t_pred / max(1, m_realised),
