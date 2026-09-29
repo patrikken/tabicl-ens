@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${PROJECT_ROOT:-$SCRATCH/tfm-ens}"
+PROJECT_ROOT="${PROJECT_ROOT:-$SCRATCH/tabicl-ens}"
 VENV="$PROJECT_ROOT/venv"
 export HF_HOME="$PROJECT_ROOT/hf"
 export OPENML_CACHE_DIR="$PROJECT_ROOT/openml"
@@ -34,6 +34,9 @@ pip install einops huggingface-hub openml pyyaml
 
 # tabicl itself, editable, from the clone.
 pip install -e "${TABICL_REPO:-$PROJECT_ROOT/tabicl}"
+#cd "${TABICL_REPO:-$PROJECT_ROOT/tabicl}"
+#pip install -e .
+#cd "$PROJECT_ROOT"
 
 # --- pre-fetch the checkpoint (login node has internet) ---------------------
 python - <<'PY'

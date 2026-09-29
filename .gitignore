@@ -145,3 +145,8 @@ papers/
 CLAUDE.md
 ckpts/
 src_private/
+
+venv/
+hf/
+openml/
+*.out

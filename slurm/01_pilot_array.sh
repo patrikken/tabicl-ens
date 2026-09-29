@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tfm-ens-pilot
-#SBATCH --account=def-CHANGEME            # <-- your CC allocation (def-/rrg-)
-#SBATCH --gres=gpu:h100:1                 # Fir/Trillium; some clusters want
+#SBATCH --account=aip-ebrahimi            # <-- your CC allocation (def-/rrg-)
+#SBATCH --gpus=h100:4                # Fir/Trillium; some clusters want
                                           #   --gpus-per-node=h100:1 instead
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
@@ -23,7 +23,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${PROJECT_ROOT:-$SCRATCH/tfm-ens}"
+PROJECT_ROOT="${PROJECT_ROOT:-$SCRATCH/tabicl-ens}"
 export HF_HOME="${HF_HOME:-$PROJECT_ROOT/hf}"
 export OPENML_CACHE_DIR="${OPENML_CACHE_DIR:-$PROJECT_ROOT/openml}"
 export TABICL_REPO="${TABICL_REPO:-$PROJECT_ROOT/tabicl}"
@@ -49,6 +49,9 @@ DATASETS=(blood-transfusion diabetes credit-g maternal_health_risk \
           MIC students_dropout Bioresponse Amazon_employee_access)
 COALITIONS=(base A1 A2 A3 A1A2 A1A3 A2A3 A1A2A3 shipped)
 
+# set SLURM_ARRAY_TASK_ID to 1 if slurm didn't provide it (e.g. for testing on login node)
+SLURM_ARRAY_TASK_ID="${SLURM_ARRAY_TASK_ID:-1}"
+
 N_COAL=${#COALITIONS[@]}
 D_IDX=$(( SLURM_ARRAY_TASK_ID / N_COAL ))
 C_IDX=$(( SLURM_ARRAY_TASK_ID % N_COAL ))
@@ -63,7 +66,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 VERIFY=""
 if [ "$SLURM_ARRAY_TASK_ID" -eq 0 ]; then VERIFY="--verify"; fi
 
-srun python -m experiments.run_cell \
+srun python -m experiments/run_cell.py \
   --dataset   "$DATASET" \
   --coalition "$COALITION" \
   --n-estimators 32 \
