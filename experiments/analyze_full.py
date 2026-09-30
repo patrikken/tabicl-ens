@@ -31,6 +31,7 @@ Use `ok` for any claim against the published leaderboard; `usable` for trends.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
@@ -51,18 +52,65 @@ SUBSET_REPS = 5          # random member subsets averaged when budget < M
 
 
 # ---------------------------------------------------------------- extract ---
+#: Logits beyond this are numerically saturated (exp(-80) ~ 1e-35), so clipping
+#: here changes no probability while removing every overflow path.
+LOGIT_CLIP = 80.0
+
+
+def sanitize(members: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Make member logits finite, and report WHY they were not.
+
+    Two distinct causes, which mean different things:
+
+    * **+/-inf** - almost always float16 cache overflow. members.npy is stored
+      as float16, whose largest finite value is 65504; a larger logit is saved
+      as inf. Those logits were already saturated, so clipping to +/-LOGIT_CLIP
+      is faithful and loses nothing.
+    * **NaN** - the model emitted a non-number. That is a real failure on that
+      dataset, not a storage artifact. We zero it so the run continues, but the
+      count is recorded per cell and surfaced in the report so affected cells
+      can be filtered rather than silently trusted.
+
+    Without this, `x - x.max()` yields inf-inf = NaN and sklearn raises
+    "Input contains NaN" mid-run.
+    """
+    n_nan = int(np.isnan(members).sum())
+    n_pos = int(np.isposinf(members).sum())
+    n_neg = int(np.isneginf(members).sum())
+    if n_nan or n_pos or n_neg:
+        members = np.nan_to_num(members, nan=0.0,
+                                posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
+    return np.clip(members, -LOGIT_CLIP, LOGIT_CLIP), dict(
+        n_nan=n_nan, n_posinf=n_pos, n_neginf=n_neg,
+        frac_nonfinite=(n_nan + n_pos + n_neg) / max(1, members.size))
+
+
 def softmax(x, t):
-    z = (x / t)
+    z = np.asarray(x, dtype=np.float64) / t
     z = z - z.max(-1, keepdims=True)
     e = np.exp(z)
-    return e / e.sum(-1, keepdims=True)
+    ssum = e.sum(-1, keepdims=True)
+    # uniform fallback if a row still degenerates; never emit NaN
+    return np.divide(e, ssum, out=np.full_like(e, 1.0 / e.shape[-1]),
+                     where=ssum > 0)
 
 
 def cell_score(p, y, n_classes):
-    """TabArena metric convention. Higher is better in both cases."""
-    if n_classes == 2:
-        return roc_auc_score(y, p[:, 1])
-    return -log_loss(y, p, labels=np.arange(n_classes))
+    """TabArena metric convention. Higher is better in both cases.
+
+    Returns NaN rather than raising when a cell is degenerate (a test fold with
+    one class present, say), so one bad cell cannot abort a 5000-cell run.
+    """
+    if not np.isfinite(p).all():
+        return float("nan")
+    try:
+        if n_classes == 2:
+            if len(np.unique(y)) < 2:
+                return float("nan")
+            return roc_auc_score(y, p[:, 1])
+        return -log_loss(y, p, labels=np.arange(n_classes))
+    except ValueError:
+        return float("nan")
 
 
 def extract(cache: Path, out: Path, limit: int | None) -> None:
@@ -80,7 +128,6 @@ def extract(cache: Path, out: Path, limit: int | None) -> None:
     if limit:
         metas = metas[:limit]
 
-    rng = np.random.default_rng(0)
     rows, n_new, n_err = [], 0, 0
 
     for i, mf in enumerate(metas, 1):
@@ -97,6 +144,15 @@ def extract(cache: Path, out: Path, limit: int | None) -> None:
             n_err += 1
             continue
 
+        # Seed per cell, not per run: which member subsets are drawn at
+        # budgets < M must not depend on processing order, or a resumed
+        # extraction would silently produce different numbers for the same cell.
+        seed = int(hashlib.sha256(
+            f'{m["dataset"]}|{m["coalition"]}|{m["split"]}'.encode()
+        ).hexdigest()[:8], 16)
+        rng = np.random.default_rng(seed)
+
+        members, health = sanitize(members)
         classes = np.unique(y)
         y_idx = np.searchsorted(classes, y)
         C, M = len(classes), members.shape[0]
@@ -127,6 +183,7 @@ def extract(cache: Path, out: Path, limit: int | None) -> None:
             sec_per_member_total=(m["fit_seconds"] + m["predict_seconds"]) / max(1, M),
             peak_mem=m.get("peak_mem_bytes"),
             meff=meff, meff_ratio=meff / max(1, M), consensus=consensus,
+            **health,
             tabicl_sha=m.get("tabicl_sha"), code_sha=m.get("code_sha"),
         )
 
@@ -155,6 +212,76 @@ def extract(cache: Path, out: Path, limit: int | None) -> None:
     print(f"\nextracted {n_new} new cells ({n_err} errors) -> {scores_f}")
 
 
+# --------------------------------------------------------------- diagnose ---
+def diagnose(cache: Path) -> None:
+    """Fast scan for non-finite logits. No scoring, no output files.
+
+    Run this first when extraction dies on "Input contains NaN": it says which
+    datasets are affected and whether the cause is float16 overflow (+/-inf,
+    benign) or genuine model NaN (a real failure on that dataset).
+    """
+    metas = sorted(cache.rglob("meta.json"))
+    print(f"scanning {len(metas)} cells at {cache}\n")
+    f16max = float(np.finfo(np.float16).max)
+    per_ds: dict[str, dict] = {}
+    n_bad = 0
+
+    for i, mf in enumerate(metas, 1):
+        m = json.loads(mf.read_text())
+        try:
+            a = np.load(mf.parent / "members.npy").astype(np.float32)
+        except Exception:  # noqa: BLE001
+            continue
+        nan = int(np.isnan(a).sum())
+        pos = int(np.isposinf(a).sum())
+        neg = int(np.isneginf(a).sum())
+        fin = a[np.isfinite(a)]
+        amax = float(np.abs(fin).max()) if fin.size else 0.0
+        d = per_ds.setdefault(m["dataset"], dict(
+            cells=0, bad_cells=0, nan=0, posinf=0, neginf=0, max_abs=0.0,
+            coalitions=set()))
+        d["cells"] += 1
+        d["max_abs"] = max(d["max_abs"], amax)
+        if nan or pos or neg:
+            n_bad += 1
+            d["bad_cells"] += 1
+            d["nan"] += nan
+            d["posinf"] += pos
+            d["neginf"] += neg
+            d["coalitions"].add(m["coalition"])
+        if i % 500 == 0:
+            print(f"  [{i}/{len(metas)}]", flush=True)
+
+    print(f"\n{n_bad} of {len(metas)} cells contain non-finite logits\n")
+    rows = []
+    for ds, d in sorted(per_ds.items()):
+        if d["bad_cells"]:
+            rows.append(dict(dataset=ds, cells=d["cells"],
+                             bad_cells=d["bad_cells"], nan=d["nan"],
+                             posinf=d["posinf"], neginf=d["neginf"],
+                             max_finite_abs=round(d["max_abs"], 1),
+                             coalitions=",".join(sorted(d["coalitions"]))))
+    if not rows:
+        print("[OK] every cell is finite.")
+        return
+
+    print(pd.DataFrame(rows).to_string(index=False))
+    tot_nan = sum(r["nan"] for r in rows)
+    tot_inf = sum(r["posinf"] + r["neginf"] for r in rows)
+    print(f"\nfloat16 max finite = {f16max}")
+    print(f"total +/-inf : {tot_inf}")
+    print(f"total NaN    : {tot_nan}")
+    if tot_inf and not tot_nan:
+        print("\n-> inf only. Consistent with float16 cache overflow: those logits")
+        print("   exceeded 65504 and were already saturated. Clipping is faithful;")
+        print("   extract handles it and the results are trustworthy.")
+    if tot_nan:
+        print("\n-> NaN present. This is NOT a storage artifact: the model emitted")
+        print("   non-numbers on these datasets. extract will zero them and record")
+        print("   the count, but filter these cells in the report")
+        print("   (report --max-nan-frac 0) before drawing conclusions from them.")
+
+
 # ----------------------------------------------------------------- report ---
 def shapley(vals: dict) -> dict:
     """Exact Shapley over {A1,A2,A3} from the 8 measured coalition values."""
@@ -176,7 +303,8 @@ def hdr(t):
     print("\n" + "=" * 78 + f"\n{t}\n" + "=" * 78)
 
 
-def report(out: Path, severity: str) -> None:
+def report(out: Path, severity: str,
+           max_nan_frac: float | None = None) -> None:
     df = pd.read_csv(out / "scores.csv").drop_duplicates(
         subset=["dataset", "coalition", "split", "budget"])
 
@@ -188,6 +316,12 @@ def report(out: Path, severity: str) -> None:
         df = df[df.severity.isin(keep)]
         print(f"severity filter '{severity}': kept {len(df)}/{before} rows")
 
+    if max_nan_frac is not None and "n_nan" in df.columns:
+        before = len(df)
+        df = df[df.n_nan.fillna(0) <= max_nan_frac * df.get("n_test", 1) ]
+        if len(df) < before:
+            print(f"nan filter: kept {len(df)}/{before} rows")
+
     hdr("T0  INVENTORY")
     inv = df[df.budget == 32]
     print(f"datasets   : {inv.dataset.nunique()}")
@@ -195,6 +329,20 @@ def report(out: Path, severity: str) -> None:
     print(f"cells      : {len(inv)}")
     print(f"\nby task type:\n{inv.groupby('task').dataset.nunique().to_string()}")
     print(f"\nsplit severity:\n{inv.severity.value_counts().to_string()}")
+    if "n_nan" in inv.columns:
+        bad = inv[(inv.n_nan.fillna(0) > 0) | (inv.n_posinf.fillna(0) > 0)
+                  | (inv.n_neginf.fillna(0) > 0)]
+        print(f"\ncells with non-finite logits: {len(bad)}/{len(inv)}")
+        if len(bad):
+            h = bad.groupby("dataset")[["n_nan", "n_posinf", "n_neginf"]].sum()
+            print(h[h.sum(axis=1) > 0].to_string())
+            if bad.n_nan.sum() > 0:
+                print("  !! NaN present -> model failure, not float16 overflow.")
+                print("     Re-run report with --max-nan-frac 0 to exclude.")
+    n_bad_score = int(inv.score.isna().sum()) if "score" in inv else 0
+    if n_bad_score:
+        print(f"\ncells with unscoreable results (NaN score): {n_bad_score}")
+
     trunc = inv[inv.m_realised < inv.requested]
     print(f"\ncells where M_realised < requested: {len(trunc)}/{len(inv)}")
     if len(trunc):
@@ -337,12 +485,19 @@ def main() -> None:
     r.add_argument("--out", required=True, type=Path)
     r.add_argument("--severity", default="usable",
                    choices=["ok", "usable", "all"])
+    r.add_argument("--max-nan-frac", type=float, default=None,
+                   help="drop cells whose NaN count exceeds this fraction of "
+                        "n_test (use 0 to drop any cell with a model NaN)")
+    g = sub.add_parser("diagnose")
+    g.add_argument("--cache", required=True, type=Path)
     a = ap.parse_args()
 
     if a.cmd == "extract":
         extract(a.cache, a.out, a.limit)
+    elif a.cmd == "diagnose":
+        diagnose(a.cache)
     else:
-        report(a.out, a.severity)
+        report(a.out, a.severity, a.max_nan_frac)
 
 
 if __name__ == "__main__":
