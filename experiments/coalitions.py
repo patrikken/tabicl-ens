@@ -95,3 +95,38 @@ def _factorial(n: int) -> int:
     for i in range(2, n + 1):
         out *= i
     return out
+
+# ---------------------------------------------------------------------------
+# A5 - context-side perturbation (see experiments/context.py)
+#
+# NOT native to TabICLv2: every shipped member sees all context rows. These are
+# a wrapper intervention, so a positive result is a recommendation to change the
+# model's member-generating process, not a description of it.
+#
+# Each coalition holds the context SIZE fixed and varies only which rows are
+# drawn, so gain vs the coalition's own M=1 isolates diversity from the
+# information loss that plain subsampling would introduce. Sweeping frac is the
+# diagnostic: as frac -> 1 members converge, so diversity -> 0 while member
+# quality -> max.
+CONTEXT_COALITIONS: Dict[str, Dict[str, Any]] = {
+    "A5_f25":    dict(frac=0.25, mode="random"),
+    "A5_f50":    dict(frac=0.50, mode="random"),
+    "A5_f75":    dict(frac=0.75, mode="random"),
+    "A5_f90":    dict(frac=0.90, mode="random"),
+    # class-balanced draws at matched size: the group-balanced construction
+    # from the context-selection literature, as an axis rather than a fix.
+    "A5bal_f50": dict(frac=0.50, mode="balanced"),
+}
+
+#: A5 needs M *fits* (the context is the training data), not M forward passes
+#: through one fit, so it is an order of magnitude dearer per member. Default
+#: lower than the feature-side budget; raise only with the timings in hand.
+CONTEXT_DEFAULT_M = 16
+
+
+def is_context(coalition: str) -> bool:
+    return coalition in CONTEXT_COALITIONS
+
+
+def all_coalitions() -> Dict[str, Dict[str, Any]]:
+    return {**COALITIONS, **CONTEXT_COALITIONS}

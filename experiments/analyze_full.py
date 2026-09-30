@@ -355,6 +355,17 @@ def report(out: Path, severity: str,
     d = df.merge(base, on=["dataset", "split"])
     d["gain"] = d.score - d.base_score
 
+    # MATCHED baseline: the same coalition at M=1, i.e. one member of the same
+    # kind. For the feature-side axes this equals the perturbed single view; for
+    # A5 it is one member at the SAME context size, which is what makes the two
+    # comparable. gain_matched isolates the ensembling effect from the member's
+    # own quality, and is the quantity H1 is about.
+    m1 = (d[d.budget == 1]
+          .groupby(["dataset", "coalition", "split"])["score"]
+          .mean().rename("m1_score").reset_index())
+    d = d.merge(m1, on=["dataset", "coalition", "split"], how="left")
+    d["gain_matched"] = d.score - d.m1_score
+
     hdr("T1  EFFECTIVE MEMBER COUNT  (the headline)")
     mm = (inv.groupby("coalition")
           .agg(M=("m_realised", "mean"), meff=("meff", "mean"),
@@ -443,6 +454,65 @@ def report(out: Path, severity: str,
         print(rec.reindex([c for c in ORDER if c in rec.index]).round(4).to_string())
         print("\n  pct_repair = share of the swing that is undoing the damage")
         print("  perturbation did to the individual member.")
+
+    # ---------------------------------------------------------- A5 -------
+    ctx = sorted(c for c in d.coalition.unique() if c.startswith("A5"))
+    if ctx:
+        hdr("T-A5  CONTEXT-SIDE PERTURBATION")
+        print("absolute gain = vs the full-context single pass (is it worth it)")
+        print("matched gain  = vs one member at the SAME context size")
+        print("                (isolates diversity from information loss)\n")
+        for task, sub in d[d.task.notna()].groupby("task"):
+            rows = []
+            for c in ctx + ["A1", "A2", "A3", "shipped"]:
+                s_ = sub[(sub.coalition == c) & (sub.budget == sub.budget.max())]
+                if not len(s_):
+                    continue
+                rows.append(dict(
+                    coalition=c,
+                    side="context" if c.startswith("A5") else "feature",
+                    M=s_.m_realised.mean(),
+                    absolute=s_.gain.mean(),
+                    matched=s_.gain_matched.mean(),
+                    meff=s_.meff.mean(),
+                    s_per_member=s_.sec_per_member_total.mean()))
+            if not rows:
+                continue
+            t = pd.DataFrame(rows).set_index("coalition")
+            t["matched_per_gpu_s"] = t.matched / t.s_per_member
+            print(f"--- {task} ---")
+            print(t.round(5).to_string())
+
+            cx = t[t.side == "context"]["matched"]
+            fx = t[t.side == "feature"]["matched"]
+            if len(cx) and len(fx):
+                print(f"\n  H1: best context-side matched gain {cx.max():+.5f} "
+                      f"({cx.idxmax()}) vs best feature-side {fx.max():+.5f} "
+                      f"({fx.idxmax()})")
+                print(f"      -> H1 {'SUPPORTED' if cx.max() > fx.max() else 'NOT supported'}"
+                      f" on raw matched gain")
+                cxe = (t[t.side == "context"]["matched_per_gpu_s"])
+                fxe = (t[t.side == "feature"]["matched_per_gpu_s"])
+                print(f"      per GPU-second: context {cxe.max():+.5f} vs "
+                      f"feature {fxe.max():+.5f}")
+
+            # the f-sweep diagnostic
+            fs = t.loc[[c for c in ctx if c.startswith("A5_f")]].copy()
+            if len(fs) > 1:
+                fs["frac"] = [int(c.split("_f")[1]) / 100 for c in fs.index]
+                fs = fs.sort_values("frac")
+                print("\n  context-fraction sweep (diversity falls as frac -> 1):")
+                print(fs[["frac", "matched", "meff", "absolute"]]
+                      .round(5).to_string(index=False))
+                r = np.corrcoef(fs.frac, fs.matched)[0, 1]
+                print(f"    corr(frac, matched gain) = {r:+.3f}")
+                if r > 0.5:
+                    print("    -> matched gain RISES as members converge: the gain")
+                    print("       is not coming from context diversity.")
+                elif r < -0.5:
+                    print("    -> matched gain FALLS as members converge: consistent")
+                    print("       with diversity driving it.")
+            print()
 
     hdr("T7  SATURATION - gain per GPU-second vs budget (shipped)")
     for task, sub in d[d.coalition == "shipped"].groupby("task"):

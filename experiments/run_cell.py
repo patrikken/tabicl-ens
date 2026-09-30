@@ -30,7 +30,9 @@ from experiments.capture import (
     MemberCapturingTabICLClassifier,
     verify_equivalence,
 )
-from experiments.coalitions import COALITIONS
+from experiments.coalitions import (COALITIONS, CONTEXT_COALITIONS,
+                                    CONTEXT_DEFAULT_M, all_coalitions,
+                                    is_context)
 from experiments.datasets import load_splits, split_severity
 
 CHECKPOINT = "tabicl-classifier-v2-20260212.ckpt"
@@ -54,7 +56,8 @@ def run_cell(
     verify: bool = False,
     device: str | None = None,
 ) -> None:
-    kwargs = COALITIONS[coalition]
+    ctx = is_context(coalition)
+    kwargs = all_coalitions()[coalition]
     # Two repos now: the upstream clone that produced the numbers, and the
     # experiment code that orchestrated them. Record both.
     tabicl_sha = _git_sha(os.environ.get("TABICL_REPO", "."))
@@ -67,28 +70,47 @@ def run_cell(
             continue
         cell.mkdir(parents=True, exist_ok=True)
 
-        clf = MemberCapturingTabICLClassifier(
-            n_estimators=n_estimators,
-            checkpoint_version=CHECKPOINT,
-            random_state=seed,
-            device=device,
-            # Left at defaults on purpose: average_logits=True means members are
-            # LOGITS, which keeps every aggregator available post hoc.
-            # kv_cache stays off: the cached path does not take feature_shuffles,
-            # so it may not preserve member semantics (EXPERIMENTS.md §5).
-            **kwargs,
-        )
+        extra = {}
+        if ctx:
+            # A5: the context IS the training data, so every member needs its
+            # own fit. All other axes are switched off inside ContextEnsemble so
+            # the member spread is attributable to the context draw alone.
+            from experiments.context import ContextEnsemble
 
-        t_fit = time.perf_counter()
-        clf.fit(X_tr, y_tr)
-        t_fit = time.perf_counter() - t_fit
+            ce = ContextEnsemble(n_estimators=n_estimators, seed=seed,
+                                 device=device, checkpoint=CHECKPOINT, **kwargs)
+            members = ce.fit_predict_members(X_tr, y_tr, X_te)
+            t_fit = ce.timings["fit_seconds"]
+            t_pred = ce.timings["predict_seconds"]
+            avg_logits = ce.average_logits
+            temperature = ce.softmax_temperature
+            extra = {k: v for k, v in ce.timings.items()
+                     if k not in ("fit_seconds", "predict_seconds")}
+        else:
+            clf = MemberCapturingTabICLClassifier(
+                n_estimators=n_estimators,
+                checkpoint_version=CHECKPOINT,
+                random_state=seed,
+                device=device,
+                # Left at defaults on purpose: average_logits=True means members
+                # are LOGITS, which keeps every aggregator available post hoc.
+                # kv_cache stays off: the cached path does not take
+                # feature_shuffles, so it may not preserve member semantics.
+                **kwargs,
+            )
 
-        if verify:
-            verify_equivalence(clf, X_te[:64])
+            t_fit = time.perf_counter()
+            clf.fit(X_tr, y_tr)
+            t_fit = time.perf_counter() - t_fit
 
-        t_pred = time.perf_counter()
-        members = clf.predict_members(X_te)
-        t_pred = time.perf_counter() - t_pred
+            if verify:
+                verify_equivalence(clf, X_te[:64])
+
+            t_pred = time.perf_counter()
+            members = clf.predict_members(X_te)
+            t_pred = time.perf_counter() - t_pred
+            avg_logits = bool(clf.average_logits)
+            temperature = float(clf.softmax_temperature)
 
         m_realised = int(members.shape[0])
         np.save(cell / "members.npy", members.astype(np.float16))
@@ -108,9 +130,11 @@ def run_cell(
             "n_estimators_requested": n_estimators,
             "m_realised": m_realised,
             "truncated": m_realised < n_estimators,
-            "average_logits": bool(clf.average_logits),
-            "softmax_temperature": float(clf.softmax_temperature),
-            "space": "logits" if clf.average_logits else "probabilities",
+            "average_logits": avg_logits,
+            "softmax_temperature": temperature,
+            "space": "logits" if avg_logits else "probabilities",
+            "axis_side": "context" if ctx else "feature",
+            **extra,
             "n_train": int(np.asarray(X_tr).shape[0]),
             "n_test": int(np.asarray(X_te).shape[0]),
             "n_features": int(np.asarray(X_tr).shape[1]),
@@ -140,14 +164,18 @@ def run_cell(
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", required=True)
-    p.add_argument("--coalition", required=True, choices=sorted(COALITIONS))
-    p.add_argument("--n-estimators", type=int, default=32)
+    p.add_argument("--coalition", required=True, choices=sorted(all_coalitions()))
+    p.add_argument("--n-estimators", type=int, default=None,
+               help="default 32 feature-side, %d for A5 (M fits)"
+                    % CONTEXT_DEFAULT_M)
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default=None)
     p.add_argument("--verify", action="store_true",
                    help="assert capture == predict_proba before caching")
     a = p.parse_args()
+    if a.n_estimators is None:
+        a.n_estimators = CONTEXT_DEFAULT_M if is_context(a.coalition) else 32
     run_cell(a.dataset, a.coalition, a.n_estimators, a.out, a.seed, a.verify, a.device)
 
 
