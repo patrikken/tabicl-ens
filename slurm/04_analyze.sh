@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=tfm-ens-analyze
-#SBATCH --account=def-CHANGEME
+#SBATCH --account=aip-ebrahimi
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
@@ -18,7 +18,7 @@
 #     python -m experiments.analyze_full report --out results/
 
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 RESULTS="${RESULTS_DIR:-$PROJECT_ROOT/results}"

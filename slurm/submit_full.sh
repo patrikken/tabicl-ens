@@ -9,16 +9,16 @@
 # either wastes queue priority on the small datasets or kills the large ones.
 
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 N_COAL=9          # base A1 A2 A3 A1A2 A1A3 A2A3 A1A2A3 shipped
 ONLY="${1:-}"
 
 #         bucket  time       mem    concurrent
-CONF_small="03:00:00 48G 16"
-CONF_medium="08:00:00 64G 8"
-CONF_large="16:00:00 96G 4"
+CONF_small="00:45:00 48G 16"
+CONF_medium="03:00:00 64G 8"
+CONF_large="10:00:00 96G 4"
 
 export SPLIT_BACKEND=tabarena
 mkdir -p logs
@@ -55,8 +55,7 @@ print(sum(1 for d in tabarena_datasets() if dataset_info(d)['bucket']==b))
 
   CMD=(sbatch --job-name="tfm-ens-$BUCKET"
        --array="0-${MAX}%${CONC}"
-       --time="$TIME" --mem="$MEM"
-       --export=ALL,BUCKET="$BUCKET",CODE_ROOT="$CODE_ROOT"
+       --time="$TIME" --mem="$MEM" --export=ALL,BUCKET="$BUCKET",CODE_ROOT="$CODE_ROOT"
        slurm/03_full_array.sh)
 
   echo "bucket $BUCKET: $N_DS datasets -> array 0-${MAX}%${CONC}, time=$TIME mem=$MEM"

@@ -1,0 +1,314 @@
+severity filter 'usable': kept 31914/31914 rows
+
+==============================================================================
+T0  INVENTORY
+==============================================================================
+datasets   : 38
+coalitions : 9
+cells      : 5319
+
+by task type:
+task
+binary        30
+multiclass     8
+
+split severity:
+severity
+resized    3159
+ok         2160
+
+cells with non-finite logits: 72/5319
+                                   n_nan  n_posinf  n_neginf
+dataset                                                     
+APSFailure                       6840000         0         0
+taiwanese_bankruptcy_prediction   613710         0         0
+  !! NaN present -> model failure, not float16 overflow.
+     Re-run report with --max-nan-frac 0 to exclude.
+
+cells where M_realised < requested: 2436/5319
+           min  median  max
+coalition                  
+A1          24    24.0   24
+A2           2     2.0    8
+A2A3        10    10.0   25
+A3           5     5.0    5
+base         1     1.0    1
+shipped     16    20.0   24
+
+==============================================================================
+T1  EFFECTIVE MEMBER COUNT  (the headline)
+==============================================================================
+                M   meff  ratio  consensus
+coalition                                 
+base        1.000  1.000  1.000      1.000
+A1         31.590  1.255  0.040      0.948
+A2          2.616  1.119  0.484      0.983
+A3          5.000  1.277  0.255      0.955
+A1A2       32.000  1.352  0.042      0.941
+A1A3       32.000  1.545  0.048      0.918
+A2A3       12.677  1.483  0.120      0.936
+A1A2A3     32.000  1.547  0.048      0.913
+shipped    30.769  1.425  0.047      0.941
+
+ratio = independent predictions purchased per nominal member.
+
+==============================================================================
+T2  GAIN OVER SINGLE PASS - binary (ROC-AUC), 30 datasets
+==============================================================================
+budget          1        2        4        8        16       32
+coalition                                                      
+base      -0.00000 -0.00000 -0.00000 -0.00000 -0.00000 -0.00000
+A1        -0.00116 -0.00064 -0.00014 -0.00001  0.00026  0.00037
+A2        -0.00057  0.00040  0.00040  0.00040  0.00040  0.00040
+A3        -0.00555 -0.00116 -0.00010  0.00011  0.00011  0.00011
+A1A2      -0.00149 -0.00070 -0.00003  0.00027  0.00048  0.00061
+A1A3      -0.00802 -0.00221 -0.00071 -0.00010  0.00013  0.00026
+A2A3      -0.00606 -0.00185 -0.00020  0.00030  0.00044  0.00044
+A1A2A3    -0.00865 -0.00190 -0.00043  0.00009  0.00041  0.00054
+shipped   -0.00131 -0.00034  0.00025  0.00054  0.00073  0.00084
+
+  paired Wilcoxon vs base @ M=32 (across dataset-splits):
+    A1       mean +0.00037  p=0.0002*  helps 22/29 ds
+    A2       mean +0.00040  p=0.0001*  helps 20/30 ds
+    A3       mean +0.00011  p=0.3292   helps 18/30 ds
+    A1A2     mean +0.00061  p=0.0001*  helps 19/29 ds
+    A1A3     mean +0.00026  p=0.0972   helps 23/30 ds
+    A2A3     mean +0.00044  p=0.0102*  helps 21/30 ds
+    A1A2A3   mean +0.00054  p=0.0022*  helps 21/30 ds
+    shipped  mean +0.00084  p=0.0000*  helps 21/29 ds
+
+==============================================================================
+T3  SHAPLEY over {A1,A2,A3} @ M=32 - binary
+==============================================================================
+    mean_phi      std      min      max  frac_positive
+A1   0.00019  0.00178 -0.00680  0.00462        0.70000
+A2   0.00048  0.00093 -0.00072  0.00271        0.66667
+A3   0.00038  0.00179 -0.00353  0.00473        0.56667
+
+  (per-dataset spread vs mean tells you whether the pooled
+   attribution is a population statement or a per-dataset one)
+
+==============================================================================
+T4  COST AND EFFICIENCY-ADJUSTED ATTRIBUTION - binary
+==============================================================================
+             fit   pred       M  s_per_member  total  vs_single_pass
+coalition                                                           
+base       0.545  0.211   1.000         0.755  0.755           1.000
+A1         0.521  4.770  31.441         0.166  5.291           7.006
+A2         0.543  0.344   2.000         0.443  0.887           1.174
+A3         1.515  0.916   5.000         0.486  2.431           3.219
+A1A2       0.520  4.793  32.000         0.166  5.312           7.034
+A1A3       1.524  5.007  32.000         0.204  6.532           8.648
+A2A3       1.511  1.583  10.000         0.309  3.094           4.096
+A1A2A3     1.521  4.959  32.000         0.203  6.480           8.580
+shipped    0.839  4.893  30.322         0.180  5.733           7.590
+
+  phi-tilde (gain per GPU-second per member):
+        phi  s_per_member  phi_per_gpu_sec
+A1  0.00019       0.16567          0.00115
+A2  0.00048       0.44334          0.00108
+A3  0.00038       0.48626          0.00078
+
+==============================================================================
+T5  IS THE SHIPPED DEFAULT ON THE FRONTIER? - binary
+==============================================================================
+            gain@8  gain@32  cost@32
+coalition                           
+base      -0.00000 -0.00000  0.75528
+A1        -0.00001  0.00037  5.29119
+A2         0.00040  0.00040  0.88667
+A3         0.00011  0.00011  2.43130
+A1A2       0.00027  0.00061  5.31232
+A1A3      -0.00010  0.00026  6.53154
+A2A3       0.00030  0.00044  3.09390
+A1A2A3     0.00009  0.00054  6.48042
+shipped    0.00054  0.00084  5.73269
+
+  best @ M=8 : shipped  (+0.00054)
+  shipped@32 : +0.00084
+  ratio      : 0.63x the gain at 1/4 the members
+
+==============================================================================
+T6  RECOVERY DECOMPOSITION - binary
+==============================================================================
+           single_member  ensemble_M32   swing  pct_repair
+coalition                                                 
+base             -0.0000       -0.0000  0.0000         NaN
+A1               -0.0012        0.0004  0.0015     75.9472
+A2               -0.0006        0.0004  0.0010     58.5008
+A3               -0.0056        0.0001  0.0057     98.0709
+A1A2             -0.0015        0.0006  0.0021     70.7550
+A1A3             -0.0080        0.0003  0.0083     96.8629
+A2A3             -0.0061        0.0004  0.0065     93.2018
+A1A2A3           -0.0087        0.0005  0.0092     94.1515
+shipped          -0.0013        0.0008  0.0022     60.8004
+
+  pct_repair = share of the swing that is undoing the damage
+  perturbation did to the individual member.
+
+==============================================================================
+T2  GAIN OVER SINGLE PASS - multiclass (-log-loss), 8 datasets
+==============================================================================
+budget          1        2        4        8        16       32
+coalition                                                      
+base      -0.00000 -0.00000 -0.00000 -0.00000 -0.00000 -0.00000
+A1         0.00024  0.00128  0.00157  0.00174  0.00188  0.00192
+A2        -0.00022  0.00142  0.00201  0.00213  0.00213  0.00213
+A3        -0.00276  0.00129  0.00286  0.00320  0.00320  0.00320
+A1A2       0.00007  0.00163  0.00234  0.00275  0.00301  0.00310
+A1A3      -0.00260  0.00086  0.00278  0.00377  0.00420  0.00447
+A2A3      -0.00241  0.00084  0.00246  0.00358  0.00393  0.00402
+A1A2A3    -0.00221  0.00117  0.00261  0.00350  0.00418  0.00444
+shipped   -0.00169  0.00005  0.00103  0.00148  0.00165  0.00185
+
+  paired Wilcoxon vs base @ M=32 (across dataset-splits):
+    A1       mean +0.00192  p=0.0000*  helps 7/8 ds
+    A2       mean +0.00213  p=0.0000*  helps 8/8 ds
+    A3       mean +0.00320  p=0.0000*  helps 8/8 ds
+    A1A2     mean +0.00310  p=0.0000*  helps 8/8 ds
+    A1A3     mean +0.00447  p=0.0000*  helps 8/8 ds
+    A2A3     mean +0.00402  p=0.0000*  helps 8/8 ds
+    A1A2A3   mean +0.00444  p=0.0000*  helps 8/8 ds
+    shipped  mean +0.00185  p=0.0003*  helps 7/8 ds
+
+==============================================================================
+T3  SHAPLEY over {A1,A2,A3} @ M=32 - multiclass
+==============================================================================
+    mean_phi      std      min      max  frac_positive
+A1   0.00131  0.00098  0.00017  0.00273          1.000
+A2   0.00172  0.00284 -0.00021  0.00845          0.750
+A3   0.00303  0.00348 -0.00014  0.01059          0.875
+
+  (per-dataset spread vs mean tells you whether the pooled
+   attribution is a population statement or a per-dataset one)
+
+==============================================================================
+T4  COST AND EFFICIENCY-ADJUSTED ATTRIBUTION - multiclass
+==============================================================================
+             fit   pred       M  s_per_member  total  vs_single_pass
+coalition                                                           
+base       0.522  0.137   1.000         0.659  0.659           1.000
+A1         0.536  2.124  32.000         0.083  2.660           4.034
+A2         0.519  0.276   4.346         0.231  0.794           1.205
+A3         1.689  0.532   5.000         0.444  2.221           3.368
+A1A2       0.532  2.115  32.000         0.083  2.647           4.015
+A1A3       1.696  2.227  32.000         0.123  3.923           5.950
+A2A3       1.684  1.222  20.192         0.180  2.906           4.407
+A1A2A3     1.683  2.224  32.000         0.122  3.907           5.925
+shipped    0.803  2.127  32.000         0.092  2.929           4.443
+
+  phi-tilde (gain per GPU-second per member):
+        phi  s_per_member  phi_per_gpu_sec
+A1  0.00131       0.08312          0.01580
+A2  0.00172       0.23089          0.00743
+A3  0.00303       0.44415          0.00682
+
+==============================================================================
+T5  IS THE SHIPPED DEFAULT ON THE FRONTIER? - multiclass
+==============================================================================
+            gain@8  gain@32  cost@32
+coalition                           
+base      -0.00000 -0.00000  0.65940
+A1         0.00174  0.00192  2.66000
+A2         0.00213  0.00213  0.79440
+A3         0.00320  0.00320  2.22076
+A1A2       0.00275  0.00310  2.64721
+A1A3       0.00377  0.00447  3.92344
+A2A3       0.00358  0.00402  2.90593
+A1A2A3     0.00350  0.00444  3.90701
+shipped    0.00148  0.00185  2.92943
+
+  best @ M=8 : A1A3  (+0.00377)
+  shipped@32 : +0.00185
+  ratio      : 2.03x the gain at 1/4 the members
+
+==============================================================================
+T6  RECOVERY DECOMPOSITION - multiclass
+==============================================================================
+           single_member  ensemble_M32   swing  pct_repair
+coalition                                                 
+base             -0.0000       -0.0000  0.0000         NaN
+A1                0.0002        0.0019  0.0017      0.0000
+A2               -0.0002        0.0021  0.0023      9.3512
+A3               -0.0028        0.0032  0.0060     46.3103
+A1A2              0.0001        0.0031  0.0030      0.0000
+A1A3             -0.0026        0.0045  0.0071     36.7474
+A2A3             -0.0024        0.0040  0.0064     37.4840
+A1A2A3           -0.0022        0.0044  0.0067     33.2807
+shipped          -0.0017        0.0019  0.0035     47.6694
+
+  pct_repair = share of the swing that is undoing the damage
+  perturbation did to the individual member.
+
+==============================================================================
+T7  SATURATION - gain per GPU-second vs budget (shipped)
+==============================================================================
+
+  binary:
+ budget      gain  gpu_sec  gain_per_sec
+      1 -0.001308 1.019898     -0.001283
+      2 -0.000344 1.200394     -0.000287
+      4  0.000252 1.561385      0.000161
+      8  0.000535 2.283369      0.000234
+     16  0.000735 3.727336      0.000197
+     32  0.000844 6.615271      0.000128
+
+  multiclass:
+ budget      gain  gpu_sec  gain_per_sec
+      1 -0.001689 0.894359     -0.001889
+      2  0.000049 0.985904      0.000050
+      4  0.001034 1.168993      0.000884
+      8  0.001483 1.535172      0.000966
+     16  0.001649 2.267529      0.000727
+     32  0.001854 3.732244      0.000497
+
+==============================================================================
+T8  PER-DATASET, shipped @ M=32
+==============================================================================
+      task                                    dataset     base      ens     gain    meff  n_splits
+    binary                              seismic-bumps  0.78763  0.78461 -0.00303 1.03436         9
+    binary                                Bioresponse  0.86635  0.86362 -0.00273 1.80968         9
+    binary                                   credit-g  0.79801  0.79660 -0.00141 1.21165        30
+    binary                        Bank_Customer_Churn  0.87198  0.87142 -0.00056 1.06835         9
+    binary                         Marketing_Campaign  0.91386  0.91330 -0.00056 1.18728        30
+    binary                               Fitness_Club  0.82136  0.82092 -0.00044 1.05197        30
+    binary                      E-CommereShippingData  0.74458  0.74418 -0.00040 1.02700         9
+    binary                                      churn  0.93441  0.93430 -0.00011 1.26794         9
+    binary                               NATICUSdroid  0.98780  0.98788  0.00008 1.21095         9
+    binary           customer_satisfaction_in_airline  0.99508  0.99528  0.00020 1.31845         9
+    binary      hazelnut-spread-contaminant-detection  0.99470  0.99506  0.00037 1.62579        30
+    binary                                   diabetes  0.83860  0.83897  0.00037 1.08593        30
+    binary                     Amazon_employee_access  0.84840  0.84881  0.00041 1.11681         9
+    binary            taiwanese_bankruptcy_prediction  0.94618  0.94672  0.00054 1.13653         9
+    binary                credit_card_clients_default  0.79013  0.79084  0.00071 1.05837         9
+    binary                                qsar-biodeg  0.94112  0.94184  0.00072 1.26481        30
+    binary           blood-transfusion-service-center  0.75485  0.75560  0.00076 1.06952        30
+    binary                                 APSFailure  0.99375  0.99456  0.00081 1.64565         9
+    binary                  online_shoppers_intention  0.93661  0.93757  0.00096 1.12852         9
+    binary                                      heloc  0.80031  0.80174  0.00143 1.15714         9
+    binary HR_Analytics_Job_Change_of_Data_Scientists  0.80408  0.80607  0.00200 1.13417         9
+    binary                           GiveMeSomeCredit  0.86531  0.86732  0.00201 1.11986         9
+    binary                    Is-this-a-good-customer  0.74599  0.74801  0.00202 1.02131        30
+    binary           in_vehicle_coupon_recommendation  0.84180  0.84444  0.00264 1.49894         9
+    binary                             bank-marketing  0.76195  0.76474  0.00279 1.13979         9
+    binary                polish_companies_bankruptcy  0.98012  0.98430  0.00418 1.61016         9
+    binary                              Diabetes130US  0.66075  0.66590  0.00515 1.01888         9
+    binary                                        jm1  0.76963  0.77726  0.00763 1.36235         9
+    binary                coil2000_insurance_policies  0.76493  0.77437  0.00944 1.00533         9
+multiclass                                     anneal -0.01922 -0.01979 -0.00057 5.74656        30
+multiclass                       maternal_health_risk -0.39841 -0.39811  0.00030 1.15877        30
+multiclass                           website_phishing -0.22345 -0.22234  0.00110 1.10347        30
+multiclass                                        MIC -0.44545 -0.44326  0.00219 1.07461        30
+multiclass                                     splice -0.10136 -0.09874  0.00262 1.31521         9
+multiclass                                     SDSS17 -0.07472 -0.07164  0.00308 1.19180         9
+multiclass      students_dropout_and_academic_success -0.53774 -0.53293  0.00482 1.22778         9
+multiclass                              hiva_agnostic -0.21465 -0.20311  0.01153 1.01603         9
+
+  helps on 28/37 datasets
+
+==============================================================================
+COST TOTAL
+==============================================================================
+campaign wall-clock (fit+predict): 5.38 GPU-hours
+
+tidy gains -> /scratch/j/joslin/tabicl-ens/results/gains.csv
