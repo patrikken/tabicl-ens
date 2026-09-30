@@ -5,10 +5,12 @@ per evaluation split, in a stable order.
 
 Backends, chosen by ``$SPLIT_BACKEND``:
 
-* ``tabarena`` (default for the full campaign) - official TabArena v0.1 splits,
-  read from the manifest written by ``prepare_tabarena.py`` on a login node.
-  Needs only numpy + openml's local cache at run time: the ``tabarena`` package
-  (and its pre-release autogluon + ray stack) is NOT imported here.
+* ``tabarena`` (default for the full campaign) - the official TabArena v0.1
+  splits, read from the manifest written by ``prepare_tabarena.py`` on a login
+  node. The ``tabarena`` PACKAGE is never installed or imported anywhere in this
+  project; the splits are reproduced from OpenML directly and verified against
+  TabArena's own recorded train/test sizes. Run time needs numpy + the OpenML
+  cache, nothing else.
 * ``openml`` - the pilot backend: 8 datasets, own stratified splits. Fine for
   variance/cost questions; NOT comparable to published TabArena numbers.
 """
