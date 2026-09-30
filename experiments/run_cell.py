@@ -31,7 +31,7 @@ from experiments.capture import (
     verify_equivalence,
 )
 from experiments.coalitions import COALITIONS
-from experiments.datasets import load_splits
+from experiments.datasets import load_splits, split_severity
 
 CHECKPOINT = "tabicl-classifier-v2-20260212.ckpt"
 
@@ -94,10 +94,16 @@ def run_cell(
         np.save(cell / "members.npy", members.astype(np.float16))
         np.save(cell / "y_test.npy", np.asarray(y_te))
 
+        sev = split_severity(dataset, k)
         meta = {
             "dataset": dataset,
             "split": k,
             "coalition": coalition,
+            # Provenance of this split vs TabArena's published record.
+            # "ok" = matches exactly; "resized" = valid but not
+            # leaderboard-comparable; "overlap" = leakage, unusable.
+            "split_severity": sev,
+            "split_verified": sev == "ok",
             "axis_kwargs": kwargs,
             "n_estimators_requested": n_estimators,
             "m_realised": m_realised,

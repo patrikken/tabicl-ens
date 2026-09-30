@@ -78,6 +78,27 @@ def dataset_info(name: str) -> dict:
     return _manifest()[name]
 
 
+def split_severity(name: str, k: int) -> str:
+    """Provenance of split ``k`` vs TabArena's published record.
+
+    ``"ok"``       sizes match exactly.
+    ``"resized"``  sizes differ - internally valid, NOT leaderboard-comparable.
+    ``"overlap"``  train/test intersect - leakage, unusable for any claim.
+    ``"unknown"``  no manifest (e.g. the OpenML pilot backend).
+
+    Recorded into every cell's meta.json by run_cell.py so the analysis can
+    filter or stratify without re-joining the audit table.
+    """
+    try:
+        splits = _manifest()[name]["splits"]
+    except Exception:  # noqa: BLE001 - pilot backend, or manifest absent
+        return "unknown"
+    for s in splits:
+        if s["k"] == k:
+            return s.get("severity", "unknown")
+    return "unknown"
+
+
 def _load_tabarena(name: str) -> Iterator[Split]:
     import openml
 

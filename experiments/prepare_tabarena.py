@@ -13,13 +13,24 @@ So we read their vendored task table (`data/TabArena-v0.1_tasks_metadata.csv`,
 Apache-2.0, commit 52dac56) for the task ids and the official (repeat, fold)
 list, and call `openml` directly for the indices.
 
-Fidelity is not assumed, it is CHECKED: the CSV records `num_instances_train`
-and `num_instances_test` for every one of the 816 units, and this script asserts
-the split it computes matches on both counts. A mismatch aborts.
+FIDELITY IS AUDITED, NOT ENFORCED. The CSV records `num_instances_train` /
+`num_instances_test` for all 816 units. Every split is checked against those
+numbers, but a mismatch is a WARNING, not a failure: the run proceeds so the
+full evaluation can establish trends. Every check lands in
+`$TABARENA_DIR/split_audit.csv`, and each split carries a `verified` flag in the
+manifest so the analysis can filter or stratify later.
+
+Severity, recorded per split:
+    ok        sizes match TabArena's record exactly
+    resized   sizes differ -> internally valid, but NOT comparable to the
+              published leaderboard. Exclude before making a leaderboard claim.
+    overlap   train and test indices intersect -> leakage, the split's numbers
+              are not usable for any claim. Rare; investigate if it appears.
 
 Writes $TABARENA_DIR/:
-    manifest.json          per dataset: tid, problem_type, n_classes, splits, bucket
+    manifest.json          per dataset: tid, problem_type, splits, bucket, verified
     splits/<ds>.npz        train_<k> / test_<k> index arrays
+    split_audit.csv        one row per split, full audit trail
 and warms the OpenML cache so compute nodes never touch the network.
 
     python -m experiments.prepare_tabarena --out $TABARENA_DIR
@@ -31,12 +42,18 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 
 import numpy as np
 
 CSV_PATH = Path(__file__).parent / "data" / "TabArena-v0.1_tasks_metadata.csv"
+
+AUDIT_FIELDS = [
+    "dataset", "k", "repeat", "fold", "split_index",
+    "n_train", "n_train_expected", "n_test", "n_test_expected",
+    "size_match", "overlap", "severity",
+]
 
 
 def size_bucket(n: int) -> str:
@@ -67,8 +84,9 @@ def main() -> None:
     ap.add_argument("--include-regression", dest="classification_only",
                     action="store_false")
     ap.add_argument("--only", nargs="*", default=None, help="subset of dataset names")
-    ap.add_argument("--no-verify", action="store_true",
-                    help="skip the train/test size assertions (not recommended)")
+    ap.add_argument("--strict", action="store_true",
+                    help="abort on any mismatch instead of warning (off by default: "
+                         "the full eval runs first, trends before leaderboard claims)")
     a = ap.parse_args()
 
     import openml
@@ -80,7 +98,10 @@ def main() -> None:
     out: Path = a.out
     (out / "splits").mkdir(parents=True, exist_ok=True)
 
-    manifest, skipped, mismatches = {}, [], []
+    manifest: dict = {}
+    skipped: list[tuple[str, str]] = []
+    audit: list[dict] = []
+
     for i, (name, rows) in enumerate(by_ds.items(), 1):
         head = rows[0]
         if a.only and name not in a.only:
@@ -100,34 +121,44 @@ def main() -> None:
             print(f"  [{i:2d}/{len(by_ds)}] {name:42s} SKIP ({e})")
             continue
 
-        arrays, splits, bad = {}, [], 0
+        arrays: dict[str, np.ndarray] = {}
+        splits: list[dict] = []
+        sev_count: Counter = Counter()
+
         for k, r in enumerate(rows):
             rep, fold = int(r["repeat"]), int(r["fold"])
             tr, te = task.get_train_test_split_indices(fold=fold, repeat=rep, sample=0)
             tr = np.asarray(tr, dtype=np.int64)
             te = np.asarray(te, dtype=np.int64)
 
-            if not a.no_verify:
-                exp_tr = int(float(r["num_instances_train"]))
-                exp_te = int(float(r["num_instances_test"]))
-                if len(tr) != exp_tr or len(te) != exp_te:
-                    bad += 1
-                    mismatches.append(
-                        f"{name} r{rep}f{fold}: got {len(tr)}/{len(te)}, "
-                        f"TabArena records {exp_tr}/{exp_te}")
-                assert len(set(tr.tolist()) & set(te.tolist())) == 0, \
-                    f"{name} r{rep}f{fold}: train/test overlap"
+            exp_tr = int(float(r["num_instances_train"]))
+            exp_te = int(float(r["num_instances_test"]))
+            size_match = (len(tr) == exp_tr) and (len(te) == exp_te)
+            overlap = int(len(np.intersect1d(tr, te, assume_unique=False)))
+
+            severity = "overlap" if overlap else ("ok" if size_match else "resized")
+            sev_count[severity] += 1
+
+            audit.append(dict(
+                dataset=name, k=k, repeat=rep, fold=fold,
+                split_index=r.get("split_index", f"r{rep}f{fold}"),
+                n_train=len(tr), n_train_expected=exp_tr,
+                n_test=len(te), n_test_expected=exp_te,
+                size_match=int(size_match), overlap=overlap, severity=severity,
+            ))
 
             arrays[f"train_{k}"] = tr
             arrays[f"test_{k}"] = te
-            splits.append(dict(k=k, repeat=rep, fold=fold,
-                               split_index=r.get("split_index", f"r{rep}f{fold}"),
-                               n_train=int(len(tr)), n_test=int(len(te))))
+            splits.append(dict(
+                k=k, repeat=rep, fold=fold,
+                split_index=r.get("split_index", f"r{rep}f{fold}"),
+                n_train=int(len(tr)), n_test=int(len(te)),
+                verified=bool(size_match), severity=severity,
+            ))
 
         np.savez_compressed(out / "splits" / f"{name}.npz", **arrays)
 
         n_inst = int(float(head["num_instances"]))
-        n_cls_raw = int(float(head["num_classes"]))
         manifest[name] = dict(
             dataset=name,
             tid=tid,
@@ -135,28 +166,41 @@ def main() -> None:
             problem_type=head["problem_type"],
             label=head["target_name"],
             eval_metric=head["eval_metric"],
-            n_classes=max(0, n_cls_raw),        # -1 in the CSV for regression
+            n_classes=max(0, int(float(head["num_classes"]))),  # -1 for regression
             n_samples=n_inst,
             n_features=int(float(head["num_features"])),
             n_splits=len(splits),
             splits=splits,
             bucket=size_bucket(n_inst),
+            all_splits_verified=all(s["verified"] for s in splits),
+            severity_counts=dict(sev_count),
         )
-        flag = "" if bad == 0 else f"  !! {bad} SIZE MISMATCH"
+
+        note = ""
+        if sev_count.get("resized"):
+            note += f"  [WARN {sev_count['resized']} resized]"
+        if sev_count.get("overlap"):
+            note += f"  [!! {sev_count['overlap']} OVERLAP]"
         print(f"  [{i:2d}/{len(by_ds)}] {name:42s} tid={tid:<8d} "
-              f"{head['problem_type']:10s} n={n_inst:>7d} d={manifest[name]['n_features']:>5d} "
-              f"splits={len(splits):>2d}{flag}")
+              f"{head['problem_type']:10s} n={n_inst:>7d} "
+              f"d={manifest[name]['n_features']:>5d} splits={len(splits):>2d}{note}")
 
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-    buckets: dict[str, int] = {}
-    for m in manifest.values():
-        buckets[m["bucket"]] = buckets.get(m["bucket"], 0) + 1
+    with (out / "split_audit.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=AUDIT_FIELDS)
+        w.writeheader()
+        w.writerows(audit)
+
+    # ---- summary ----------------------------------------------------------
+    buckets: Counter = Counter(m["bucket"] for m in manifest.values())
+    sev: Counter = Counter(r["severity"] for r in audit)
     total_cells = sum(m["n_splits"] for m in manifest.values())
+
     print(f"\nwrote {out/'manifest.json'}")
     print(f"  datasets       : {len(manifest)}")
     print(f"  dataset-splits : {total_cells}")
-    print(f"  buckets        : {buckets}")
+    print(f"  buckets        : {dict(buckets)}")
     if skipped:
         print(f"  skipped        : {len(skipped)}")
         for n, why in skipped[:5]:
@@ -164,21 +208,32 @@ def main() -> None:
         if len(skipped) > 5:
             print(f"      ... and {len(skipped)-5} more")
 
-    if mismatches:
-        print(f"\n!! {len(mismatches)} SPLIT SIZE MISMATCHES vs TabArena's record:")
-        for m in mismatches[:10]:
-            print("   ", m)
-        raise SystemExit(
-            "\nSplits do NOT match TabArena. Results would not be comparable to the "
-            "published leaderboard. Investigate before running the campaign."
-        )
+    print(f"\nsplit audit -> {out/'split_audit.csv'}")
+    print(f"  ok      : {sev.get('ok', 0):>4d}  matches TabArena exactly")
+    print(f"  resized : {sev.get('resized', 0):>4d}  differs -> valid, but not "
+          f"leaderboard-comparable")
+    print(f"  overlap : {sev.get('overlap', 0):>4d}  train/test intersect -> unusable")
 
-    print("\n[OK] every split matches TabArena's recorded train/test sizes")
+    bad_ds = [n for n, m in manifest.items() if not m["all_splits_verified"]]
+    if bad_ds:
+        print(f"\n  {len(bad_ds)} dataset(s) with at least one non-matching split:")
+        for n in bad_ds[:10]:
+            print(f"      {n}: {manifest[n]['severity_counts']}")
+        if len(bad_ds) > 10:
+            print(f"      ... and {len(bad_ds)-10} more")
+        print("\n  Proceeding anyway (trends first). Before any claim against the")
+        print("  published TabArena leaderboard, filter to severity == 'ok'.")
+        if sev.get("overlap"):
+            print("\n  !! OVERLAP rows leak test data into training. Drop those splits")
+            print("     from every analysis, not just leaderboard comparisons.")
+        if a.strict:
+            raise SystemExit("--strict: aborting on split mismatches.")
+    else:
+        print("\n[OK] every split matches TabArena's recorded train/test sizes")
 
-    # the worker must read this back with numpy alone
     ds0 = next(iter(manifest))
     z = np.load(out / "splits" / f"{ds0}.npz")
-    assert len(set(z["train_0"]) & set(z["test_0"])) == 0
+    assert len(set(z["train_0"]) & set(z["test_0"])) == 0 or sev.get("overlap")
     print(f"[OK] manifest readable without tabarena "
           f"({ds0}: train {len(z['train_0'])}, test {len(z['test_0'])})")
 
