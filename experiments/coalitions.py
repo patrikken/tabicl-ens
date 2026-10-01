@@ -5,7 +5,7 @@ Axis vocabulary (see EXPERIMENTS.md §3):
   A2  class-order permutation     -> class_shuffle_method   (classification only)
   A3  preprocessing / transform   -> norm_methods
   A4  feature subsampling         -> NOT native; wrapper, see subsample.py
-  A5  context construction        -> NOT native; wrapper, see subsample.py
+  A5  context construction        -> NOT native; wrapper, see context.py
   A6  stochastic replication      -> structurally empty; determinism control
 
 Structural caps, from tabicl v2.2.0 ``Shuffler.shuffle``:
@@ -128,8 +128,95 @@ def is_context(coalition: str) -> bool:
     return coalition in CONTEXT_COALITIONS
 
 
+# ---------------------------------------------------------------------------
+# A4 - feature-side subsampling (see experiments/subsample.py)
+#
+# The missing cell of the perturbation 2x2. A1-A3 are feature-side and
+# information-PRESERVING (they re-present the same data); A5 is context-side
+# and information-DESTROYING. A4 is feature-side and information-destroying,
+# so it is the only construction that tells us whether the measured recovery
+# rate -- diversity gained per unit of member quality destroyed -- is a
+# property of destroying information in general (A4 should look like A5) or
+# specifically of shrinking the retrieval context (A4 should look like A1-A3).
+#
+# Fractions mirror the A5 sweep exactly so the two recovery curves are
+# comparable point for point.
+#
+# Like A5 this is a wrapper intervention and needs M FITS, not M forward
+# passes, because the column set changes the fit. Default M=16.
+FEATURE_SUB_COALITIONS: Dict[str, Dict[str, Any]] = {
+    # --- the primary sweep: random draws, matched to A5_f25..f90 ---
+    "A4_g25": dict(frac=0.25, mode="random"),
+    "A4_g50": dict(frac=0.50, mode="random"),
+    "A4_g75": dict(frac=0.75, mode="random"),
+    "A4_g90": dict(frac=0.90, mode="random"),
+    # --- mode contrast at a matched subset size (g=0.50) ---
+    # balanced dealing: same k, but every column used ~equally often, so this
+    # isolates coverage balance from subset size.
+    "A4rr_g50":  dict(frac=0.50, mode="roundrobin"),
+    # importance-weighted draws: biases members toward informative columns,
+    # which should raise member quality and lower diversity. If the recovery
+    # rate improves, the exchange rate is a function of WHICH information is
+    # dropped, not just how much.
+    "A4imp_g50": dict(frac=0.50, mode="importance"),
+    # --- column-LOFO: the feature-side analogue of A5lofo, g = 1 - 1/M ---
+    "A4lofo_M8":  dict(mode="lofo", n_folds=8),    # g = 0.875
+    "A4lofo_M16": dict(mode="lofo", n_folds=16),   # g = 0.9375
+}
+
+#: The sweep is the experiment; the rest are secondary. Submit in this order.
+A4_SWEEP = ["A4_g25", "A4_g50", "A4_g75", "A4_g90"]
+A4_VARIANTS = ["A4rr_g50", "A4imp_g50", "A4lofo_M8", "A4lofo_M16"]
+
+#: Same reasoning as CONTEXT_DEFAULT_M: M members = M fits.
+FEATURE_SUB_DEFAULT_M = 16
+
+#: Below this many columns the axis is degenerate -- a 25% draw of 6 columns is
+#: 2 columns, and member quality collapses for reasons that have nothing to do
+#: with ensembling. The submit script filters the benchmark on this.
+A4_MIN_FEATURES = 8
+
+
+def is_feature_sub(coalition: str) -> bool:
+    return coalition in FEATURE_SUB_COALITIONS
+
+
+def a4_applicable(coalition: str, n_features: int) -> bool:
+    """Is this A4 coalition meaningful on a dataset with this many columns?
+
+    Two ways it degenerates:
+
+    * too few columns outright -- a 25% draw of 6 columns is 2 columns, and
+      member quality collapses for reasons unrelated to ensembling;
+    * column-LOFO with M > d/2 -- the folds are mostly empty, so most members
+      see every column and are identical to the unperturbed fit. That inflates
+      the apparent member quality and deflates diversity, and the cell tells
+      you nothing.
+    """
+    if not is_feature_sub(coalition):
+        return True
+    if n_features < A4_MIN_FEATURES:
+        return False
+    folds = FEATURE_SUB_COALITIONS[coalition].get("n_folds")
+    return not folds or n_features >= 2 * int(folds)
+
+
+def is_wrapper(coalition: str) -> bool:
+    """True for the axes tabicl does not implement natively (A4, A5)."""
+    return is_context(coalition) or is_feature_sub(coalition)
+
+
+def destroys_information(coalition: str) -> bool:
+    """Does this coalition withhold data from its members?
+
+    The 2x2's second dimension. A1-A3 re-present the same data; A4 drops
+    columns and A5 drops rows.
+    """
+    return is_wrapper(coalition)
+
+
 def all_coalitions() -> Dict[str, Dict[str, Any]]:
-    return {**COALITIONS, **CONTEXT_COALITIONS}
+    return {**COALITIONS, **CONTEXT_COALITIONS, **FEATURE_SUB_COALITIONS}
 
 # ---------------------------------------------------------------------------
 # A5-LOFO - leave-one-fold-out context partitioning.

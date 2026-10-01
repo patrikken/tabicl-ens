@@ -31,8 +31,9 @@ from experiments.capture import (
     verify_equivalence,
 )
 from experiments.coalitions import (COALITIONS, CONTEXT_COALITIONS,
-                                    CONTEXT_DEFAULT_M, all_coalitions,
-                                    is_context)
+                                    CONTEXT_DEFAULT_M, FEATURE_SUB_DEFAULT_M,
+                                    all_coalitions, destroys_information,
+                                    is_context, is_feature_sub)
 from experiments.datasets import load_splits, split_severity
 
 CHECKPOINT = "tabicl-classifier-v2-20260212.ckpt"
@@ -57,8 +58,9 @@ def run_cell(
     device: str | None = None,
 ) -> None:
     ctx = is_context(coalition)
+    fsub = is_feature_sub(coalition)
     kwargs = all_coalitions()[coalition]
-    # LOFO: M is determined by the partition (f = 1 - 1/M), not chosen.
+    # LOFO (rows or columns): M is determined by the partition, not chosen.
     _folds = kwargs.get("n_folds")
     if _folds:
         n_estimators = int(_folds)
@@ -89,6 +91,22 @@ def run_cell(
             avg_logits = ce.average_logits
             temperature = ce.softmax_temperature
             extra = {k: v for k, v in ce.timings.items()
+                     if k not in ("fit_seconds", "predict_seconds")}
+        elif fsub:
+            # A4: the column set changes the fit, so like A5 every member needs
+            # its own. All other axes are switched off inside the ensemble so
+            # the spread is attributable to the column subset alone.
+            from experiments.subsample import FeatureSubsampleEnsemble
+
+            fe = FeatureSubsampleEnsemble(n_estimators=n_estimators, seed=seed,
+                                          device=device, checkpoint=CHECKPOINT,
+                                          **kwargs)
+            members = fe.fit_predict_members(X_tr, y_tr, X_te)
+            t_fit = fe.timings["fit_seconds"]
+            t_pred = fe.timings["predict_seconds"]
+            avg_logits = fe.average_logits
+            temperature = fe.softmax_temperature
+            extra = {k: v for k, v in fe.timings.items()
                      if k not in ("fit_seconds", "predict_seconds")}
         else:
             clf = MemberCapturingTabICLClassifier(
@@ -137,7 +155,11 @@ def run_cell(
             "average_logits": avg_logits,
             "softmax_temperature": temperature,
             "space": "logits" if avg_logits else "probabilities",
+            # The perturbation 2x2: where the axis acts, and whether it
+            # withholds data from the member. A1-A3 preserve, A4/A5 destroy.
             "axis_side": "context" if ctx else "feature",
+            "information": ("destroying" if destroys_information(coalition)
+                            else "preserving"),
             **extra,
             "n_train": int(np.asarray(X_tr).shape[0]),
             "n_test": int(np.asarray(X_te).shape[0]),
@@ -170,7 +192,7 @@ def main() -> None:
     p.add_argument("--dataset", required=True)
     p.add_argument("--coalition", required=True, choices=sorted(all_coalitions()))
     p.add_argument("--n-estimators", type=int, default=None,
-               help="default 32 feature-side, %d for A5 (M fits)"
+               help="default 32 for the native axes, %d for A4/A5 (M fits)"
                     % CONTEXT_DEFAULT_M)
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--seed", type=int, default=0)
@@ -179,7 +201,12 @@ def main() -> None:
                    help="assert capture == predict_proba before caching")
     a = p.parse_args()
     if a.n_estimators is None:
-        a.n_estimators = CONTEXT_DEFAULT_M if is_context(a.coalition) else 32
+        if is_context(a.coalition):
+            a.n_estimators = CONTEXT_DEFAULT_M
+        elif is_feature_sub(a.coalition):
+            a.n_estimators = FEATURE_SUB_DEFAULT_M
+        else:
+            a.n_estimators = 32
     run_cell(a.dataset, a.coalition, a.n_estimators, a.out, a.seed, a.verify, a.device)
 
 
