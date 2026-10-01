@@ -1,11 +1,11 @@
-severity filter 'ok': kept 17460/44334 rows
+severity filter 'ok': kept 20160/49734 rows
 
 ==============================================================================
 T0  INVENTORY
 ==============================================================================
 datasets   : 15
 coalitions : 14
-cells      : 2910
+cells      : 3360
 
 by task type:
 task
@@ -14,16 +14,16 @@ multiclass     2
 
 split severity:
 severity
-ok    2910
+ok    3360
 
-cells with non-finite logits: 36/2910
+cells with non-finite logits: 36/3360
                                   n_nan  n_posinf  n_neginf
 dataset                                                    
 taiwanese_bankruptcy_prediction  613710         0         0
   !! NaN present -> model failure, not float16 overflow.
      Re-run report with --max-nan-frac 0 to exclude.
 
-cells where M_realised < requested: 990/2910
+cells where M_realised < requested: 990/3360
            min  median  max
 coalition                  
 A2           2     2.0    3
@@ -247,27 +247,27 @@ matched gain  = vs one member at the SAME context size
 --- binary ---
               side         M  absolute  matched     meff  s_per_member  matched_per_gpu_s
 coalition                                                                                
-A5_f25     context  16.00000  -0.00268  0.01037  2.29941       0.27014            0.03840
-A5_f50     context  16.00000  -0.00046  0.00428  1.86252       0.27567            0.01554
-A5_f75     context  16.00000   0.00007  0.00170  1.51428       0.28656            0.00592
-A5_f90     context  16.00000   0.00026  0.00061  1.27269       0.27341            0.00222
-A5bal_f50  context  16.00000  -0.00060  0.00369  1.89030       0.26266            0.01405
+A5_f25     context  16.00000  -0.00536  0.01412  1.92022       0.32028            0.04408
+A5_f50     context  16.00000  -0.00095  0.00695  1.64151       0.34578            0.02010
+A5_f75     context  16.00000   0.00014  0.00320  1.39547       0.37366            0.00855
+A5_f90     context  16.00000   0.00035  0.00126  1.22125       0.38810            0.00326
+A5bal_f50  context  16.00000  -0.00064  0.00441  1.72014       0.32641            0.01350
 A1         feature  32.00000   0.00081  0.00089  1.17758       0.10876            0.00821
 A2         feature   2.00000   0.00046  0.00057  1.09161       0.36421            0.00156
 A3         feature   5.00000   0.00071  0.00530  1.23848       0.28462            0.01861
 shipped    feature  30.66667   0.00120  0.00129  1.22826       0.11369            0.01137
 
-  H1: best context-side matched gain +0.01037 (A5_f25) vs best feature-side +0.00530 (A3)
+  H1: best context-side matched gain +0.01412 (A5_f25) vs best feature-side +0.00530 (A3)
       -> H1 SUPPORTED on raw matched gain
-      per GPU-second: context +0.03840 vs feature +0.01861
+      per GPU-second: context +0.04408 vs feature +0.01861
 
   context-fraction sweep (diversity falls as frac -> 1):
  frac  matched    meff  absolute
- 0.25  0.01037 2.29941  -0.00268
- 0.50  0.00428 1.86252  -0.00046
- 0.75  0.00170 1.51428   0.00007
- 0.90  0.00061 1.27269   0.00026
-    corr(frac, matched gain) = -0.967
+ 0.25  0.01412 1.92022  -0.00536
+ 0.50  0.00695 1.64151  -0.00095
+ 0.75  0.00320 1.39547   0.00014
+ 0.90  0.00126 1.22125   0.00035
+    corr(frac, matched gain) = -0.983
     -> matched gain FALLS as members converge: consistent
        with diversity driving it.
 
@@ -346,6 +346,6 @@ multiclass                           website_phishing -0.22345 -0.22234  0.00110
 ==============================================================================
 COST TOTAL
 ==============================================================================
-campaign wall-clock (fit+predict): 2.12 GPU-hours
+campaign wall-clock (fit+predict): 2.98 GPU-hours
 
 tidy gains -> /scratch/j/joslin/tabicl-ens/results/gains.csv
