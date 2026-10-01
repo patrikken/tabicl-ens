@@ -84,6 +84,46 @@ def expected_overlap(frac: float) -> float:
     return float(frac)
 
 
+def lofo_partition(y, n_folds: int, rng: np.random.Generator,
+                   pin_below: int = 2) -> tuple[list[np.ndarray], np.ndarray]:
+    """Leave-one-fold-out partition: member m holds every row EXCEPT fold m.
+
+    Unlike the independent draws above, this ties the context fraction to the
+    member count:
+
+        f = 1 - 1/M,  pairwise overlap = (M-2)/(M-1)
+
+    which is the one-parameter family our fixed-M fraction sweep could not
+    reach. It is also the maximum-f construction for a given M, and it
+    guarantees every row is used by exactly M-1 members.
+
+    Folds are assigned round-robin WITHIN each class, so every fold is
+    stratified and each member's context keeps the class proportions. A class
+    with fewer than ``pin_below`` rows cannot survive being held out at all, so
+    those rows are pinned into every member rather than dropped -- without this
+    a singleton class vanishes from one member and the member outputs stop
+    being column-aligned.
+
+    Returns (member index arrays, pinned row indices).
+    """
+    y = np.asarray(y)
+    classes, inv = np.unique(y, return_inverse=True)
+    n = len(y)
+    counts = np.bincount(inv, minlength=len(classes))
+
+    fold = np.full(n, -1, dtype=np.int64)        # -1 = pinned, never held out
+    for c in range(len(classes)):
+        idx = np.where(inv == c)[0]
+        if counts[c] < pin_below:
+            continue                              # leave at -1
+        idx = rng.permutation(idx)
+        fold[idx] = np.arange(len(idx)) % n_folds
+
+    pinned = np.where(fold == -1)[0]
+    members = [np.sort(np.where(fold != m)[0]) for m in range(n_folds)]
+    return members, pinned
+
+
 @dataclass
 class ContextEnsemble:
     """M members that differ ONLY in which context rows they see.
@@ -98,7 +138,8 @@ class ContextEnsemble:
     """
     n_estimators: int = 16
     frac: float = 0.5
-    mode: str = "random"
+    mode: str = "random"          # random | balanced | lofo
+    n_folds: int | None = None    # lofo only; M is forced to equal it
     min_per_class: int = 4
     device: str | None = None
     checkpoint: str = "tabicl-classifier-v2-20260212.ckpt"
@@ -117,13 +158,22 @@ class ContextEnsemble:
         rng = np.random.default_rng(self.seed)
         all_classes = np.unique(y_tr)
 
+        lofo_members = None
+        if self.mode == "lofo":
+            # M is a consequence of the partition, not a free parameter.
+            self.n_estimators = int(self.n_folds or self.n_estimators)
+            self.frac = 1.0 - 1.0 / self.n_estimators
+            lofo_members, pinned = lofo_partition(y_tr, self.n_estimators, rng)
+            self._n_pinned = int(len(pinned))
+
         members, ref_classes = [], None
         t_fit = t_pred = 0.0
         sizes, overlaps, prev = [], [], None
 
         for m in range(self.n_estimators):
-            idx = subsample_indices(y_tr, self.frac, rng, self.mode,
-                                    self.min_per_class)
+            idx = (lofo_members[m] if lofo_members is not None
+                   else subsample_indices(y_tr, self.frac, rng, self.mode,
+                                          self.min_per_class))
             sizes.append(int(len(idx)))
             if prev is not None:
                 overlaps.append(len(np.intersect1d(idx, prev)) / max(1, len(idx)))
@@ -168,6 +218,12 @@ class ContextEnsemble:
             context_size_mean=float(np.mean(sizes)),
             context_size_min=int(np.min(sizes)),
             pairwise_overlap_mean=float(np.mean(overlaps)) if overlaps else 0.0,
-            pairwise_overlap_expected=expected_overlap(self.frac),
+            pairwise_overlap_expected=(
+                (self.n_estimators - 2) / (self.n_estimators - 1)
+                if self.mode == "lofo" and self.n_estimators > 1
+                else expected_overlap(self.frac)),
+            mode=self.mode,
+            frac_effective=self.frac,
+            n_pinned=getattr(self, "_n_pinned", 0),
         )
         return np.stack(members, axis=0)

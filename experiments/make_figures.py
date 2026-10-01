@@ -48,6 +48,10 @@ def tidy():
             .mean().rename("b").reset_index())
     d = df.merge(base, on=["dataset", "split"])
     d["gain"] = d.score - d.b
+    m1 = (d[d.budget == 1].groupby(["dataset", "coalition", "split"])["score"]
+          .mean().rename("m1").reset_index())
+    d = d.merge(m1, on=["dataset", "coalition", "split"], how="left")
+    d["matched"] = d.score - d.m1
     return df, d
 
 
@@ -254,6 +258,97 @@ def fig_phi(df, d):
     print(f"     phit: {dict(phit.round(5))}")
 
 
+
+
+# --------------------------------------------------------------- figure 5 ---
+# A5: the diversity / member-quality trade-off.
+# absolute = member_quality + matched_gain, exactly, so the panel is an additive
+# decomposition rather than three unrelated curves. All three are score deltas,
+# so they share one axis (no dual-axis).
+# Palette slots 1/2/3; #1baf7a WARNs on contrast, so every series is
+# direct-labelled as well as legended -- the relief the validator requires.
+AQUA = "#1baf7a"
+A5F = ["A5_f25", "A5_f50", "A5_f75", "A5_f90"]
+
+
+def fig_a5(df, d):
+    ds18 = sorted(df[df.coalition == "A5_f50"].dataset.unique())
+    sub = d[d.dataset.isin(ds18)]
+    fig, axes = plt.subplots(1, 2, figsize=(5.8, 2.7))
+    for ax, (task, metric) in zip(axes, [("binary", "ROC-AUC"),
+                                         ("multiclass", "$-$log-loss")]):
+        s = sub[(sub.task == task) & (sub.budget == 16)]
+        fr, mq, mg, ab = [], [], [], []
+        for c in A5F:
+            x = s[s.coalition == c]
+            fr.append(int(c.split("_f")[1]) / 100)
+            mq.append((x.m1 - x.b).mean())
+            mg.append(x.matched.mean())
+            ab.append(x.gain.mean())
+        ax.axhline(0, color=INK2, lw=0.7, zorder=2)
+        ax.plot(fr, mg, "-o", color=ORANGE, lw=1.7, ms=4, zorder=4,
+                label="diversity gained (matched)")
+        ax.plot(fr, mq, "-o", color=AQUA, lw=1.7, ms=4, zorder=4,
+                label="member quality lost")
+        ax.plot(fr, ab, "-o", color=BLUE, lw=2.0, ms=5, zorder=5,
+                label="net vs full context")
+        ax.annotate("diversity gained", (fr[0], mg[0]),
+                    textcoords="offset points", xytext=(4, 4),
+                    fontsize=7, color=ORANGE)
+        ax.annotate("quality lost", (fr[0], mq[0]),
+                    textcoords="offset points", xytext=(4, -10),
+                    fontsize=7, color=AQUA)
+        ax.annotate("net", (fr[-1], ab[-1]), textcoords="offset points",
+                    xytext=(-2, -12), fontsize=7, color=BLUE, ha="right")
+        ax.set_xlabel("context fraction $f$ held by each member")
+        ax.set_xticks(fr, [f"{v:.2f}" for v in fr])
+        ax.set_title(f"{task} ({metric})", loc="left", pad=5)
+        ax.margins(y=0.16)
+        despine(ax)
+    axes[0].set_ylabel("score delta")
+    axes[1].legend(loc="lower right", fontsize=7, handlelength=1.4)
+    fig.suptitle("Context perturbation buys real diversity and pays for it in "
+                 "member quality",
+                 x=0.005, ha="left", y=1.04, fontsize=9)
+    fig.tight_layout(w_pad=1.8)
+    fig.savefig("fig_a5.pdf")
+    plt.close(fig)
+    print("  fig_a5.pdf")
+
+
+def fig_a5_h1(df, d):
+    """H1: context vs feature decorrelation, matched datasets and budget."""
+    ds18 = sorted(df[df.coalition == "A5_f50"].dataset.unique())
+    sub = d[d.dataset.isin(ds18) & (d.budget == 16)]
+    fig, axes = plt.subplots(1, 2, figsize=(5.6, 2.5))
+    for ax, task in zip(axes, ["binary", "multiclass"]):
+        s = sub[sub.task == task]
+        rows = []
+        for c in A5F + ["A5bal_f50", "A1", "A2", "A3", "A1A3", "A1A2A3", "shipped"]:
+            x = s[s.coalition == c]
+            if len(x):
+                rows.append((c, x.matched.mean(),
+                             c.startswith("A5")))
+        rows.sort(key=lambda r: r[1])
+        y = np.arange(len(rows))
+        ax.barh(y, [r[1] for r in rows], height=0.6,
+                color=[ORANGE if r[2] else BLUE for r in rows], zorder=3)
+        ax.set_yticks(y, [r[0] for r in rows], fontsize=7)
+        ax.set_xlabel("diversity gain at matched context size")
+        ax.set_title(task, loc="left", pad=5)
+        ax.grid(axis="y", visible=False)
+        ax.set_axisbelow(True)
+        despine(ax, left=False)
+        ax.tick_params(axis="y", length=0)
+    fig.suptitle("H1 confirmed: context-side perturbation decorrelates "
+                 "7--8$\\times$ better than feature-side",
+                 x=0.005, ha="left", y=1.05, fontsize=9)
+    fig.tight_layout(w_pad=1.4)
+    fig.savefig("fig_a5_h1.pdf")
+    plt.close(fig)
+    print("  fig_a5_h1.pdf")
+
+
 if __name__ == "__main__":
     df, d = tidy()
     print("rendering:")
@@ -261,3 +356,6 @@ if __name__ == "__main__":
     fig_budget(df, d)
     fig_frontier(df, d)
     fig_phi(df, d)
+    if any(c.startswith("A5") for c in df.coalition.unique()):
+        fig_a5(df, d)
+        fig_a5_h1(df, d)

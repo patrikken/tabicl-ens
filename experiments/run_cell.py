@@ -58,6 +58,10 @@ def run_cell(
 ) -> None:
     ctx = is_context(coalition)
     kwargs = all_coalitions()[coalition]
+    # LOFO: M is determined by the partition (f = 1 - 1/M), not chosen.
+    _folds = kwargs.get("n_folds")
+    if _folds:
+        n_estimators = int(_folds)
     # Two repos now: the upstream clone that produced the numbers, and the
     # experiment code that orchestrated them. Record both.
     tabicl_sha = _git_sha(os.environ.get("TABICL_REPO", "."))

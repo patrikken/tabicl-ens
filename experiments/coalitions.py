@@ -130,3 +130,30 @@ def is_context(coalition: str) -> bool:
 
 def all_coalitions() -> Dict[str, Dict[str, Any]]:
     return {**COALITIONS, **CONTEXT_COALITIONS}
+
+# ---------------------------------------------------------------------------
+# A5-LOFO - leave-one-fold-out context partitioning.
+#
+# The fraction sweep above varied f at FIXED M=16, which cannot separate "how
+# much context is dropped" from "how many members there are". LOFO ties them,
+#
+#     f = 1 - 1/M,   pairwise overlap = (M-2)/(M-1),
+#
+# so sweeping M traces a different path through the (M, f) plane: as M grows the
+# quality cost falls AND the diversity falls, and the product may have an
+# interior optimum the fixed-M sweep was structurally unable to see.
+#
+# Cost warning: M members = M fits, and at large M each fit is nearly
+# full-sized, so A5lofo_M64 is ~64 near-full fits per cell. Small/medium only.
+LOFO_COALITIONS: Dict[str, Dict[str, Any]] = {
+    "A5lofo_M8":  dict(mode="lofo", n_folds=8),    # f = 0.875
+    "A5lofo_M16": dict(mode="lofo", n_folds=16),   # f = 0.9375
+    "A5lofo_M32": dict(mode="lofo", n_folds=32),   # f = 0.969
+    "A5lofo_M64": dict(mode="lofo", n_folds=64),   # f = 0.984
+}
+CONTEXT_COALITIONS.update(LOFO_COALITIONS)
+
+
+def lofo_folds(coalition: str) -> int | None:
+    """Member count implied by a LOFO coalition (M is not free here)."""
+    return LOFO_COALITIONS.get(coalition, {}).get("n_folds")
