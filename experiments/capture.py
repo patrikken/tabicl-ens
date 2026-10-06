@@ -193,16 +193,20 @@ def default_checkpoint(task: str) -> str:
     return CKPT_REGRESSOR if task == "regression" else CKPT_CLASSIFIER
 
 
-def member_estimator(task: str, checkpoint: str, seed: int, device):
-    """One unperturbed single-member estimator: every native axis off."""
+def member_estimator(task: str, checkpoint: str, seed: int, device, view: dict | None = None):
+    """One single-member estimator. Every native axis is off unless ``view``
+    (``views.shipped_view``) switches a shipped-style view on for this member."""
     if task == "regression":
+        kw = dict(feat_shuffle_method="none", norm_methods=["none"])
+        kw.update(view or {})
         return MemberCapturingTabICLRegressor(
-            n_estimators=1, feat_shuffle_method="none", norm_methods=["none"],
-            checkpoint_version=checkpoint, random_state=seed, device=device)
+            n_estimators=1, checkpoint_version=checkpoint, random_state=seed,
+            device=device, **kw)
+    kw = dict(feat_shuffle_method="none", class_shuffle_method="none", norm_methods=["none"])
+    kw.update(view or {})
     return MemberCapturingTabICLClassifier(
-        n_estimators=1, feat_shuffle_method="none", class_shuffle_method="none",
-        norm_methods=["none"], checkpoint_version=checkpoint,
-        random_state=seed, device=device)
+        n_estimators=1, checkpoint_version=checkpoint, random_state=seed,
+        device=device, **kw)
 
 
 def align_member(owner, clf, m, ref_classes, all_classes):

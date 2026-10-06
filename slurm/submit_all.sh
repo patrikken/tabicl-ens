@@ -10,8 +10,8 @@
 # Narrow it with env vars (all optional):
 #     MODELS="tabfm"                  tabicl | tabfm | both (default both)
 #     TASKS="regression"              classification | regression | both
-#     SET=native                      coalition set: TabICL native|a4|a5|lofo|all,
-#                                     TabFM axes|withhold|expand|plus|new|all
+#     SET=native                      coalition set: TabICL native|a4|a5|lofo|shipplus|all,
+#                                     TabFM axes|withhold|expand|plus|new|shipplus|all
 #                                     (default all; each model keeps its own names)
 #     BUCKETS="small medium"          size buckets (default all three)
 #     SKIP_COMPLETE=0                 also resubmit pairs whose splits all exist

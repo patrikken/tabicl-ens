@@ -134,6 +134,37 @@ def score_cell(d: Path, model: str, budgets=BUDGETS, reps=REPS):
     return full, sweep
 
 
+def reference_of(coalition: str, model: str) -> str | None:
+    """Coalition a "shipped + one axis" ablation is read against.
+
+    TabICLv2 S_A4/S_A5/S_A7 -> ``S_ctl`` (same one-fit-per-member machinery and
+    shipped-style views, nothing withheld), so wrapper overhead cancels.
+    TabFM S_* -> ``shipped`` (the same fit with exactly one extra kwarg).
+    ``S_ctl`` itself -> ``shipped``: that gain is the wrapper/schedule overhead
+    and should be ~0; a large value means the S_* gains are not trustworthy.
+    Everything else has no ablation reference (gain is vs ``base``)."""
+    if coalition == "S_ctl":
+        return "shipped"
+    if coalition.startswith("S_"):
+        return "S_ctl" if model == "tabicl" else "shipped"
+    return None
+
+
+def add_ablation_gain(df: pd.DataFrame, model: str, keys=("dataset", "split"),
+                      extra=()) -> pd.DataFrame:
+    """Add ``ref`` and ``gain_ref`` (= score - the ablation reference's score on the
+    same dataset/split[/M]); NaN where a coalition has no reference."""
+    k = list(keys) + list(extra)
+    out = df.copy()
+    out["ref"] = [reference_of(c, model) for c in out.coalition]
+    sc = out.set_index(k + ["coalition"])["score"]
+    idx = list(zip(*[out[c] for c in k], out["ref"]))
+    out["gain_ref"] = out["score"].to_numpy() - np.array(
+        [sc.get(i, np.nan) if i[-1] else np.nan for i in idx], dtype=float)
+    out.loc[out["ref"].isna(), "gain_ref"] = np.nan
+    return out
+
+
 def add_gain(df: pd.DataFrame, keys=("dataset", "split"), extra=()) -> pd.DataFrame:
     """Gain over the same dataset/split 'base' coalition (same M budget for the sweep).
     ``rel_gain`` is gain / |base score| for regression (relative RMSE reduction)
@@ -166,12 +197,16 @@ def main():
         sweep += s
         if (i + 1) % 500 == 0:
             print(f"  {i + 1}/{len(metas)}", flush=True)
-    df = add_gain(pd.DataFrame(full))
-    sw = add_gain(pd.DataFrame(sweep), extra=("M",))
+    df = add_ablation_gain(add_gain(pd.DataFrame(full)), a.model)
+    sw = add_ablation_gain(add_gain(pd.DataFrame(sweep), extra=("M",)), a.model, extra=("M",))
     df.to_csv(out / "scores.csv", index=False)
     sw.to_csv(out / "sweep.csv", index=False)
     print(f"{len(df)} cells, {len(sw)} sweep rows -> {out}")
     print(df.groupby(["task", "coalition"])["gain"].mean().unstack(0).round(4).to_string())
+    ab = df[df.ref.notna()]
+    if len(ab):
+        print("\nablations (gain over their reference):")
+        print(ab.groupby(["task", "coalition", "ref"])["gain_ref"].mean().round(4).to_string())
 
 
 if __name__ == "__main__":

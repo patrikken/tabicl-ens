@@ -73,3 +73,16 @@ try:
 except ValueError:
     check(True, "unknown task rejected")
 print(f"{n_ok} checks passed")
+
+# ---- ablation references ------------------------------------------------------
+from experiments.score_cells import reference_of, add_ablation_gain
+check(reference_of("S_A4_g50", "tabicl") == "S_ctl" and reference_of("S_A4_g50", "tabfm") == "shipped", "ref by model")
+check(reference_of("S_ctl", "tabicl") == "shipped" and reference_of("A1", "tabicl") is None, "S_ctl vs shipped; native has none")
+d = pd.DataFrame([dict(dataset="d", split=0, coalition=c, score=s, task="binary")
+                  for c, s in [("base", .5), ("shipped", .6), ("S_ctl", .62), ("S_A4_g50", .65), ("A7", .55)]])
+g = add_ablation_gain(d, "tabicl").set_index("coalition")
+check(np.isclose(g.loc["S_A4_g50", "gain_ref"], .03) and np.isclose(g.loc["S_ctl", "gain_ref"], .02), "gain_ref values")
+check(np.isnan(g.loc["A7", "gain_ref"]) and np.isnan(g.loc["base", "gain_ref"]), "no ref -> NaN")
+g2 = add_ablation_gain(d, "tabfm").set_index("coalition")
+check(np.isclose(g2.loc["S_A4_g50", "gain_ref"], .05), "tabfm S_* vs shipped")
+print(f"{n_ok} checks passed (with ablations)")

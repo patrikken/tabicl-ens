@@ -229,7 +229,7 @@ from experiments import run_cell_tabfm as F
 F.load_splits = fake_splits
 F.dataset_task = R.dataset_task
 tf_out = Path(tempfile.mkdtemp())
-for coal in ("base", "shipped", "A8both", "plus_full", "A4_g50", "A5_f50", "A7"):
+for coal in ("base", "shipped", "A8both", "plus_full", "A4_g50", "A5_f50", "S_A4_g50"):
     F.run_cell("reg_toy", coal, 8, tf_out, "ckpt", seed=0, device="cpu")
     mm = json.loads((tf_out / f"reg_toy/{coal}/split0/meta.json").read_text())
     a = np.load(tf_out / f"reg_toy/{coal}/split0/members.npy")
@@ -238,6 +238,8 @@ mp = json.loads((tf_out / "reg_toy/plus_full/split0/meta.json").read_text())
 chk(mp["enable_nnls"] and abs(sum(mp["nnls_weights"]) - 1) < 1e-9, "plus_full records NNLS weights (sum 1)")
 chk(json.loads((tf_out / "reg_toy/base/split0/meta.json").read_text())["m_realised"] == 1, "base is a single member")
 chk(mm["task"] == "regression" and mm["n_classes"] is None and mm["space"] == "predictions", "TabFM regression meta")
+F.run_cell("reg_toy", "A7", 8, tf_out, "ckpt")
+chk(not (tf_out / "reg_toy/A7").exists(), "A7 on a table with no categorical columns is a no-op")
 F.run_cell("reg_toy", "A2", 8, tf_out, "ckpt")
 chk(not (tf_out / "reg_toy/A2").exists(), "A2 on TabFM regression is a no-op, not a crash")
 Cap = T.make_capturing_regressor()

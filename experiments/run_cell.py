@@ -37,7 +37,9 @@ from experiments.coalitions import (COALITIONS, CONTEXT_COALITIONS,
                                     CONTEXT_DEFAULT_M, FEATURE_SUB_DEFAULT_M,
                                     all_coalitions, coalition_applies,
                                     destroys_information, is_context,
-                                    is_feature_sub, tabicl_kwargs)
+                                    is_feature_sub, needs_categoricals,
+                                    tabicl_kwargs)
+from experiments.views import categorical_columns
 from experiments.datasets import dataset_task, load_splits, split_severity
 
 CHECKPOINT = "tabicl-classifier-v2-20260212.ckpt"
@@ -86,6 +88,10 @@ def run_cell(
         if (cell / "meta.json").exists():
             print(f"[skip] {cell} already complete", flush=True)
             continue
+        if needs_categoricals(coalition) and not categorical_columns(X_tr):
+            print(f"[n/a] {coalition} relabels categorical columns; {dataset} has none",
+                  flush=True)
+            return
         cell.mkdir(parents=True, exist_ok=True)
 
         extra = {}

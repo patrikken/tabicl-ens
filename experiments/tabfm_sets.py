@@ -36,8 +36,15 @@ SETS: dict[str, list[str]] = {
     "expand":   ["A8cross", "A8svd", "A8both"],
     "plus":     ["plus_full", "plus_noexpand", "plus_nonnls", "plus_nocal"],
     "new":      ["A7"],
+    # shipped + one extra axis: the marginal value of each axis ON TOP of the
+    # default ensemble. Read against ``shipped``; A7/A4/A5/A8 alone are read
+    # against ``base``.
+    "shipplus": ["S_A7"]
+                + [f"S_A4_g{g:02d}" for g in (50, 75, 90)]
+                + [f"S_A5_f{f:02d}" for f in (50, 75, 90)]
+                + ["S_A8cross", "S_A8svd", "S_A8both"],
 }
-SETS["all"] = [c for s in ("axes", "withhold", "expand", "plus", "new")
+SETS["all"] = [c for s in ("axes", "withhold", "expand", "plus", "new", "shipplus")
                for c in SETS[s]]
 
 
@@ -54,7 +61,7 @@ def coalition_set(name: str, n_features: int | None = None,
     avail = tabfm_coalitions(task)
     out = [c for c in SETS[name] if c in avail]
     if n_features is not None and n_features < A4_MIN_FEATURES:
-        out = [c for c in out if not c.startswith("A4_")]
+        out = [c for c in out if not c.startswith(("A4_", "S_A4_"))]
     if task == "classification":
         missing = [c for c in SETS[name] if c not in TABFM_COALITIONS]
         if missing:

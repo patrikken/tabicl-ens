@@ -209,10 +209,13 @@ def is_wrapper(coalition: str) -> bool:
 def destroys_information(coalition: str) -> bool:
     """Does this coalition withhold data from its members?
 
-    The 2x2's second dimension. A1-A3 re-present the same data; A4 drops
-    columns and A5 drops rows.
+    The 2x2's second dimension. A1-A3 (and A7, and the S_ctl control) re-present
+    the same data; A4 drops columns and A5 drops rows.
     """
-    return is_wrapper(coalition)
+    if not is_wrapper(coalition):
+        return False
+    kw = {**CONTEXT_COALITIONS, **FEATURE_SUB_COALITIONS}[coalition]
+    return kw.get("mode") == "lofo" or kw.get("frac", 1.0) < 1.0
 
 
 def all_coalitions() -> Dict[str, Dict[str, Any]]:
@@ -239,6 +242,39 @@ LOFO_COALITIONS: Dict[str, Dict[str, Any]] = {
     "A5lofo_M64": dict(mode="lofo", n_folds=64),   # f = 0.984
 }
 CONTEXT_COALITIONS.update(LOFO_COALITIONS)
+
+# ---------------------------------------------------------------------------
+# "Shipped + one axis" ablations (S_*)
+#
+# The shipped recipe already uses A1, A2 and A3. Each S_* coalition keeps a
+# shipped-style view on every member (views.shipped_view) and adds exactly one
+# axis the recipe does NOT use, so the gain over ``S_ctl`` is that axis's
+# marginal contribution ON TOP of the default ensemble.
+#
+# These are wrapper coalitions: M FITS (default 16), not M passes through one fit.
+# ``S_ctl`` is the matched control -- full context, full columns, same one-fit-
+# per-member machinery and the same shipped-style views -- so wrapper overhead
+# and the random-vs-latin schedule difference cancel in every comparison.
+# ``A7`` (alone) is the single-axis baseline for categorical relabelling.
+# A7 needs categorical columns: on a table without any, the worker logs [n/a].
+SHIPPED_PLUS_CONTEXT: Dict[str, Dict[str, Any]] = {
+    "S_ctl":    dict(frac=1.0, mode="random", view="shipped"),
+    "S_A7":     dict(frac=1.0, mode="random", view="shipped", relabel=True),
+    "A7":       dict(frac=1.0, mode="random", view="none", relabel=True),
+    **{f"S_A5_f{int(f*100):02d}": dict(frac=f, mode="random", view="shipped")
+       for f in (0.50, 0.75, 0.90)},
+}
+SHIPPED_PLUS_FEATURE: Dict[str, Dict[str, Any]] = {
+    f"S_A4_g{int(g*100):02d}": dict(frac=g, mode="random", view="shipped")
+    for g in (0.50, 0.75, 0.90)
+}
+CONTEXT_COALITIONS.update(SHIPPED_PLUS_CONTEXT)
+FEATURE_SUB_COALITIONS.update(SHIPPED_PLUS_FEATURE)
+SHIPPED_PLUS = list(SHIPPED_PLUS_CONTEXT) + list(SHIPPED_PLUS_FEATURE)
+
+
+def needs_categoricals(coalition: str) -> bool:
+    return bool(CONTEXT_COALITIONS.get(coalition, {}).get("relabel"))
 
 
 def lofo_folds(coalition: str) -> int | None:
@@ -302,14 +338,17 @@ TABICL_SETS: Dict[str, list[str]] = {
     "a4": A4_SWEEP + A4_VARIANTS,
     "a5": ["A5_f25", "A5_f50", "A5_f75", "A5_f90", "A5bal_f50"],
     "lofo": ["A5lofo_M8", "A5lofo_M16", "A5lofo_M32", "A5lofo_M64"],
+    "shipplus": SHIPPED_PLUS,
 }
-TABICL_SETS["all"] = [c for k in ("native", "a4", "a5", "lofo") for c in TABICL_SETS[k]]
+TABICL_SETS["all"] = [c for k in ("native", "a4", "a5", "lofo", "shipplus")
+                      for c in TABICL_SETS[k]]
 
 #: buckets each wrapper set may run on (cost: M fits per cell)
 SET_BUCKETS = {"native": ("small", "medium", "large"),
                "a4": ("small", "medium", "large"),
                "a5": ("small", "medium", "large"),
-               "lofo": ("small", "medium")}
+               "lofo": ("small", "medium"),
+               "shipplus": ("small", "medium", "large")}
 
 
 def tabicl_coalition_set(name: str, task: str, n_features: int | None,

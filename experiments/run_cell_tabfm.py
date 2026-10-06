@@ -36,6 +36,7 @@ from pathlib import Path
 import numpy as np
 
 from experiments.datasets import dataset_task, load_splits, split_severity
+from experiments.views import categorical_columns
 from experiments.tabfm_capture import (CHECKPOINT_REPO, TABFM_COALITIONS,
                                        TABFM_DEFAULT_M, TABFM_REG_COALITIONS,
                                        axis_side, destroys_information,
@@ -77,6 +78,10 @@ def run_cell(dataset: str, coalition: str, n_estimators: int, out_root: Path,
         if (cell / "meta.json").exists():
             print(f"[skip] {cell} already complete", flush=True)
             continue
+        if kwargs_tpl.get("permute_categorical") and not categorical_columns(X_tr):
+            print(f"[n/a] {coalition} relabels categorical columns; {dataset} has none",
+                  flush=True)
+            return
         cell.mkdir(parents=True, exist_ok=True)
 
         n_rows, n_features = np.asarray(X_tr).shape

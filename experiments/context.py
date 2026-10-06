@@ -163,6 +163,11 @@ class ContextEnsemble:
     checkpoint: str = "tabicl-classifier-v2-20260212.ckpt"
     task: str = "classification"   # classification | regression
     seed: int = 0
+    #: "none" = every other axis off (the A5 construction); "shipped" = each member
+    #: also carries a shipped-style view (views.shipped_view), for the S_A5 ablations.
+    view: str = "none"
+    #: A7: relabel categorical columns per member (views.relabel_categories)
+    relabel: bool = False
     timings: dict = field(default_factory=dict)
     #: mirrored from the fitted members so run_cell can record how the cached
     #: logits should be aggregated (log pooling at this temperature).
@@ -208,16 +213,24 @@ class ContextEnsemble:
                 overlaps.append(len(np.intersect1d(idx, prev)) / max(1, len(idx)))
             prev = idx
 
-            clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device)
+            from experiments.views import relabel_categories, shipped_view
+            view = shipped_view(self.task, m) if self.view == "shipped" else None
+            clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device,
+                                   view=view)
+            Xm_tr = X_tr.iloc[idx] if hasattr(X_tr, "iloc") else X_tr[idx]
+            Xm_te = X_te
+            if self.relabel:
+                Xm_tr, Xm_te, cat_cols = relabel_categories(
+                    Xm_tr, X_te, np.random.default_rng(self.seed * 1_000_003 + m))
+                self.n_categorical = len(cat_cols)
             t0 = time.perf_counter()
-            clf.fit(X_tr.iloc[idx] if hasattr(X_tr, "iloc") else X_tr[idx],
-                    y_tr[idx])
+            clf.fit(Xm_tr, y_tr[idx])
             t_fit += time.perf_counter() - t0
 
             ref_classes = align_member(self, clf, m, ref_classes, all_classes)
 
             t0 = time.perf_counter()
-            p = clf.predict_members(X_te)          # (1, n_test[, C])
+            p = clf.predict_members(Xm_te)          # (1, n_test[, C])
             t_pred += time.perf_counter() - t0
             members.append(p[0])
             del clf
@@ -234,5 +247,7 @@ class ContextEnsemble:
             mode=self.mode,
             frac_effective=self.frac,
             n_pinned=getattr(self, "_n_pinned", 0),
+            view=self.view, relabel=self.relabel,
+            n_categorical=getattr(self, "n_categorical", None),
         )
         return np.stack(members, axis=0)

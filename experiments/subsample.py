@@ -290,6 +290,8 @@ class FeatureSubsampleEnsemble:
     checkpoint: str = "tabicl-classifier-v2-20260212.ckpt"
     task: str = "classification"    # classification | regression
     seed: int = 0
+    #: "none" | "shipped": see context.ContextEnsemble.view (S_A4 ablations)
+    view: str = "none"
     timings: dict = field(default_factory=dict)
     #: mirrored from the fitted members so run_cell records how the cached
     #: logits should be aggregated (log pooling at this temperature).
@@ -339,7 +341,10 @@ class FeatureSubsampleEnsemble:
             usage[cols] += 1
 
         for m, cols in enumerate(subsets):
-            clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device)
+            from experiments.views import shipped_view
+            view = shipped_view(self.task, m) if self.view == "shipped" else None
+            clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device,
+                                   view=view)
             t0 = time.perf_counter()
             clf.fit(_take_columns(X_tr, cols), y_tr)
             t_fit += time.perf_counter() - t0
@@ -356,6 +361,7 @@ class FeatureSubsampleEnsemble:
             fit_seconds=t_fit,
             predict_seconds=t_pred,
             importance_seconds=t_imp,
+            view=self.view,
             n_features_total=int(d),
             subset_size_mean=float(np.mean(sizes)),
             subset_size_min=int(np.min(sizes)),

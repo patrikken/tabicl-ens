@@ -229,6 +229,21 @@ TABFM_COALITIONS: dict[str, dict[str, Any]] = {
                        enable_nnls=True),
 }
 
+def _shipped_plus(table: dict) -> dict:
+    """"Shipped + one axis" ablations: the shipped recipe with exactly one extra
+    axis switched on. The gain over ``shipped`` is that axis's marginal
+    contribution on top of the default ensemble (same model, same M, same fit)."""
+    ship = table["shipped"]
+    out = {"S_A7": dict(ship, permute_categorical=True)}
+    out.update({f"S_A4_g{g}": dict(ship, frac_features=g / 100) for g in (50, 75, 90)})
+    out.update({f"S_A5_f{f}": dict(ship, frac_rows=f / 100) for f in (50, 75, 90)})
+    out["S_A8cross"] = dict(ship, n_feature_crosses="sqrt")
+    out["S_A8svd"] = dict(ship, n_svd_features="sqrt")
+    out["S_A8both"] = dict(ship, n_feature_crosses="sqrt", n_svd_features="sqrt")
+    return out
+
+TABFM_COALITIONS.update(_shipped_plus(TABFM_COALITIONS))
+
 #: M members = M forward passes here (one fit, cached context), so the budget can
 #: match TabICLv2's 32 rather than A4/A5's 16.
 TABFM_DEFAULT_M = 32
@@ -318,6 +333,8 @@ TABFM_REG_COALITIONS: dict[str, dict[str, Any]] = {
     "plus_noexpand": dict(enable_nnls=True, **_REG_SHIPPED),
     "plus_nonnls": dict(n_feature_crosses="sqrt", n_svd_features="sqrt", **_REG_SHIPPED),
 }
+
+TABFM_REG_COALITIONS.update(_shipped_plus(TABFM_REG_COALITIONS))
 
 
 def make_capturing_regressor():
