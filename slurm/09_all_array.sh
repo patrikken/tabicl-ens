@@ -46,7 +46,7 @@ case "$MODEL" in
     srun python -m experiments.run_cell \
       --dataset   "$DATASET" \
       --coalition "$COALITION" \
-      --out       "$CACHE_DIR" \
+      --out       "$CACHE_DIR/tabiclv2" \
       --seed      0 \
       --device    cuda
     ;;

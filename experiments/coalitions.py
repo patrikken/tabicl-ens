@@ -343,6 +343,8 @@ TABICL_SETS: Dict[str, list[str]] = {
 TABICL_SETS["all"] = [c for k in ("native", "a4", "a5", "lofo", "shipplus")
                       for c in TABICL_SETS[k]]
 
+TABICL_SETS["axes"] = TABICL_SETS["native"]       # alias: TabFM's name for the same set
+
 #: buckets each wrapper set may run on (cost: M fits per cell)
 SET_BUCKETS = {"native": ("small", "medium", "large"),
                "a4": ("small", "medium", "large"),

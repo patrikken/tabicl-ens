@@ -47,6 +47,9 @@ SETS: dict[str, list[str]] = {
 SETS["all"] = [c for s in ("axes", "withhold", "expand", "plus", "new", "shipplus")
                for c in SETS[s]]
 
+#: shared vocabulary with the TabICLv2 campaign, so ``SET=native`` works for both
+SETS["native"] = SETS["axes"]
+
 
 def coalition_set(name: str, n_features: int | None = None,
                   task: str = "classification") -> list[str]:

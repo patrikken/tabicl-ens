@@ -270,8 +270,8 @@ for model in ("tabicl", "tabfm"):
 chk(not any(c.startswith("A4") for d, c, *_ in G.pairs("tabicl", "classification", "all") if d == "cls_b"), "A4 skipped on the 6-column dataset")
 chk(not any(c in C.LOFO_COALITIONS for d, c, *_ in G.pairs("tabicl", "classification", "large") if d == "cls_big"), "LOFO not scheduled on the large bucket")
 cache = Path(tempfile.mkdtemp())
-for k in range(3): (cache / "cls_a/base" / f"split{k}").mkdir(parents=True); (cache / "cls_a/base" / f"split{k}" / "meta.json").write_text("{}")
-(cache / "cls_a/A1/split0").mkdir(parents=True); (cache / "cls_a/A1/split0/meta.json").write_text("{}")
+for k in range(3): (cache / "tabiclv2/cls_a/base" / f"split{k}").mkdir(parents=True); (cache / "tabiclv2/cls_a/base" / f"split{k}" / "meta.json").write_text("{}")
+(cache / "tabiclv2/cls_a/A1/split0").mkdir(parents=True); (cache / "tabiclv2/cls_a/A1/split0/meta.json").write_text("{}")
 full = {(d, c) for d, c, *_ in G.pairs("tabicl", "classification", "small")}
 skip = {(d, c) for d, c, *_ in G.pairs("tabicl", "classification", "small", skip_complete=True, cache=cache)}
 chk(("cls_a", "base") in full and ("cls_a", "base") not in skip, "a fully cached pair is skipped")
@@ -280,6 +280,8 @@ chk(("cls_a", "A1") in skip, "a half-done pair is kept (the worker resumes at th
 for k in range(3): (cache / "tabfm/reg_a/shipped" / f"split{k}").mkdir(); (cache / "tabfm/reg_a/shipped" / f"split{k}" / "meta.json").write_text("{}")
 sk = {(d, c) for d, c, *_ in G.pairs("tabfm", "regression", "small", skip_complete=True, cache=cache)}
 chk(("reg_a", "shipped") not in sk and ("reg_a", "A1") in sk, "TabFM caches are read from <cache>/tabfm")
+chk(G.cache_root("tabicl", Path("/c")) == Path("/c/tabiclv2") and G.cache_root("tabicl", Path("/c/tabiclv2")) == Path("/c/tabiclv2")
+    and G.cache_root("tabfm", Path("/c")) == Path("/c/tabfm"), "cache_root: tabiclv2/ and tabfm/ under $CACHE_DIR")
 
 print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
 sys.exit(0 if ok else 1)

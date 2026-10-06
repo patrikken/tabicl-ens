@@ -1,6 +1,7 @@
 """Score every cached cell, for either model and either task, in one pass.
 
     python -m experiments.score_cells CACHE OUT_DIR [--model tabicl|tabfm]
+        CACHE = $CACHE_DIR (reads tabiclv2/ or tabfm/ by --model) or the model dir itself
         -> OUT_DIR/scores.csv   one row per (dataset, coalition, split) at full M,
                                 with gain/rel_gain against that dataset's 'base'
         -> OUT_DIR/sweep.csv    the same cells at member budgets 1,2,4,...,32,
@@ -187,10 +188,14 @@ def main():
     cache, out = Path(a.cache), Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     full, sweep = [], []
+    # CACHE may be $CACHE_DIR itself or the model's own directory
+    sub = {"tabicl": "tabiclv2", "tabfm": "tabfm"}[a.model]
+    if (cache / sub).is_dir():
+        cache = cache / sub
     metas = sorted(cache.rglob("meta.json"))
-    # tabfm cache lives under <cache>/tabfm; never score it as TabICL
-    if a.model == "tabicl":
-        metas = [m for m in metas if "tabfm" not in m.relative_to(cache).parts]
+    # a legacy flat cache (cells at the root) can sit beside the model dirs
+    metas = [m for m in metas if not {"tabfm", "tabiclv2"} & set(m.relative_to(cache).parts)
+             or cache.name in ("tabfm", "tabiclv2")]
     for i, mf in enumerate(metas):
         f, s = score_cell(mf.parent, a.model)
         full.append(f)

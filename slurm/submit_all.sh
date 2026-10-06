@@ -129,5 +129,5 @@ Resume:      bash slurm/submit_all.sh          (skips finished pairs; time-outs 
 Failures:    grep -L "task .* done" logs/tfm-*.out
 Plan files:  \$PROJECT_ROOT/plans/${STAMP}_*.txt  (array index -> pair, frozen)
 
-Caches:      TabICLv2 -> \$CACHE_DIR            TabFM -> \$CACHE_DIR/tabfm
+Caches:      TabICLv2 -> \$CACHE_DIR/tabiclv2   TabFM -> \$CACHE_DIR/tabfm
 EOF

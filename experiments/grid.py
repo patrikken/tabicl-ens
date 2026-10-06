@@ -8,7 +8,7 @@ the list while cells were completing underneath it).
 
     python -m experiments.grid plan   --models tabicl tabfm --tasks classification regression
     python -m experiments.grid list   --model tabfm --task regression --bucket small \\
-                                      --skip-complete --cache $CACHE_DIR/tabfm > plan.txt
+                                      --skip-complete --cache $CACHE_DIR > plan.txt
 
 Completeness is judged from disk: a pair is complete iff every split of the
 dataset has a meta.json. A pair with SOME splits done is kept (the worker skips
@@ -40,9 +40,15 @@ def coalitions_for(model: str, task: str, n_features: int, bucket: str,
     raise ValueError(f"unknown model {model!r}")
 
 
+#: model -> directory under $CACHE_DIR holding its cells
+MODEL_DIR = {"tabicl": "tabiclv2", "tabfm": "tabfm"}
+
+
 def cache_root(model: str, cache: Path) -> Path:
-    """TabICLv2 caches live at the cache root, TabFM under ``tabfm/``."""
-    return cache / "tabfm" if model == "tabfm" and cache.name != "tabfm" else cache
+    """``$CACHE_DIR/tabiclv2`` for TabICLv2, ``$CACHE_DIR/tabfm`` for TabFM.
+    A path that already ends in the model's directory is used as is."""
+    sub = MODEL_DIR[model]
+    return cache if cache.name == sub else cache / sub
 
 
 def n_done(root: Path, dataset: str, coalition: str) -> int:
