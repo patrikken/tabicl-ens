@@ -256,17 +256,101 @@ def resolve_fracs(kwargs: dict, n_rows: int, n_features: int) -> dict:
     return out
 
 
-def is_expansion(coalition: str) -> bool:
+def tabfm_coalitions(task: str = "classification") -> dict[str, dict[str, Any]]:
+    """Coalition table for a task. Regression has no class axis, no logits and no
+    calibration, so its table is smaller and its kwargs are not a subset-compatible
+    copy of the classification one -- upstream raises on unknown kwargs."""
+    return TABFM_REG_COALITIONS if task == "regression" else TABFM_COALITIONS
+
+
+def is_expansion(coalition: str, task: str = "classification") -> bool:
     """Does this coalition ADD columns rather than withhold them?"""
-    kw = TABFM_COALITIONS[coalition]
+    kw = tabfm_coalitions(task)[coalition]
     return bool(kw.get("n_feature_crosses") or kw.get("n_svd_features"))
 
 
-def destroys_information(coalition: str) -> bool:
-    kw = TABFM_COALITIONS[coalition]
+def destroys_information(coalition: str, task: str = "classification") -> bool:
+    kw = tabfm_coalitions(task)[coalition]
     return any(k in kw for k in FRAC_KEYS)
 
 
-def axis_side(coalition: str) -> str:
-    kw = TABFM_COALITIONS[coalition]
+def axis_side(coalition: str, task: str = "classification") -> str:
+    kw = tabfm_coalitions(task)[coalition]
     return "context" if "frac_rows" in kw else "feature"
+
+
+# ---------------------------------------------------------------------------
+# Regression
+#
+# From classifier_and_regressor.py::TabFMRegressor:
+#
+#     def predict(self, X):
+#         predictions = self._predict_internal(X)          # (E, T) SCALED targets
+#         return self._combine_predictions(predictions)    # the ONLY aggregator
+#
+#     _combine_predictions: NNLS off -> inverse_transform(mean over E)
+#                           NNLS on  -> ensemble_weights_ @ inverse_transform(each)
+#
+# There is no class axis, no temperature and no calibration. Members are cached
+# on the ORIGINAL target scale, so both aggregators are a linear map of the cache
+# and any weighting can be replayed post hoc.
+# ---------------------------------------------------------------------------
+_REG_BASE = dict(feat_shuffle_method="none", norm_methods=["none"])
+_REG_SHIPPED = dict(feat_shuffle_method="random", norm_methods=["none", "power"])
+
+TABFM_REG_COALITIONS: dict[str, dict[str, Any]] = {
+    "base": dict(n_estimators=1, **_REG_BASE),
+    "A1": dict(feat_shuffle_method="random", norm_methods=["none"]),
+    "A3": dict(feat_shuffle_method="none", norm_methods=ALL_NORMS),
+    "A1A3": dict(feat_shuffle_method="random", norm_methods=ALL_NORMS),
+    "shipped": dict(**_REG_SHIPPED),
+    "A7": dict(permute_categorical=True, **_REG_BASE),
+    **{f"A4_g{int(g*100):02d}": dict(frac_features=g, **_REG_BASE)
+       for g in (0.25, 0.50, 0.75, 0.90)},
+    **{f"A5_f{int(f*100):02d}": dict(frac_rows=f, **_REG_BASE)
+       for f in (0.25, 0.50, 0.75, 0.90)},
+    "A8cross": dict(n_feature_crosses="sqrt", **_REG_BASE),
+    "A8svd": dict(n_svd_features="sqrt", **_REG_BASE),
+    "A8both": dict(n_feature_crosses="sqrt", n_svd_features="sqrt", **_REG_BASE),
+    # the regression TabFM+ stack (.ensemble(): crosses + SVD + NNLS) and its parts
+    "plus_full": dict(n_feature_crosses="sqrt", n_svd_features="sqrt",
+                      enable_nnls=True, **_REG_SHIPPED),
+    "plus_noexpand": dict(enable_nnls=True, **_REG_SHIPPED),
+    "plus_nonnls": dict(n_feature_crosses="sqrt", n_svd_features="sqrt", **_REG_SHIPPED),
+}
+
+
+def make_capturing_regressor():
+    """Capture subclass for TabFMRegressor, built lazily like the classifier one."""
+    from tabfm import TabFMRegressor                      # noqa: PLC0415
+
+    class MemberCapturingTabFMRegressor(TabFMRegressor):
+        """``predict_members`` returns ``(E, n_test)`` ORIGINAL-scale predictions."""
+
+        def predict_members(self, X) -> np.ndarray:
+            if not hasattr(self, "ensemble_generator_"):
+                raise RuntimeError("call fit() before predict_members()")
+            scaled = np.asarray(self._predict_internal(X))            # (E, T)
+            return np.stack([self._inverse_transform_y(scaled[i])
+                             for i in range(scaled.shape[0])]).astype(np.float64)
+
+        def aggregate_members(self, members: np.ndarray) -> np.ndarray:
+            """Upstream's own aggregation, applied to a captured tensor."""
+            members = np.asarray(members, dtype=np.float64)
+            if getattr(self, "enable_nnls", False):
+                return np.dot(self.ensemble_weights_, members)
+            return members.mean(axis=0)
+
+    return MemberCapturingTabFMRegressor
+
+
+def verify_equivalence_regression(reg, X, rtol: float = 1e-6) -> None:
+    """Assert captured-then-aggregated == ``predict``.
+
+    Not bitwise: without NNLS upstream averages in SCALED space and inverts once,
+    we invert each member and average -- the same linear map, different rounding.
+    ``rtol`` is far below any difference between coalitions we report.
+    """
+    ours = reg.aggregate_members(reg.predict_members(X))
+    theirs = np.asarray(reg.predict(X), dtype=np.float64)
+    np.testing.assert_allclose(ours, theirs, rtol=rtol, atol=1e-9 * max(1.0, float(np.abs(theirs).max())))

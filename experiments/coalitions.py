@@ -244,3 +244,86 @@ CONTEXT_COALITIONS.update(LOFO_COALITIONS)
 def lofo_folds(coalition: str) -> int | None:
     """Member count implied by a LOFO coalition (M is not free here)."""
     return LOFO_COALITIONS.get(coalition, {}).get("n_folds")
+
+
+# ---------------------------------------------------------------------------
+# Regression
+#
+# TabICLRegressor has NO class-order axis (there are no classes), so A2 and every
+# coalition containing it are classification-only. The regressor also has no
+# `class_shuffle_method` kwarg at all -- passing one raises -- so regression
+# kwargs are the classification kwargs with that key stripped.
+#
+# A4 / A5 are wrappers and apply to both tasks; for regression the context
+# strata are quantile bins of y (see context.strata) and the importance model
+# is an ExtraTreesRegressor.
+# ---------------------------------------------------------------------------
+TASKS = ("classification", "regression")
+
+#: native coalitions that exist for regression (no A2)
+REGRESSION_NATIVE = ["base", "A1", "A3", "A1A3", "shipped"]
+
+#: never part of a campaign: the A6 determinism control is a gate, not a cell
+NOT_IN_CAMPAIGN = {"A6_control"}
+
+
+def task_of(problem_type: str | None) -> str:
+    """Manifest ``problem_type`` -> 'classification' | 'regression'."""
+    return "regression" if str(problem_type).lower() == "regression" else "classification"
+
+
+def coalition_applies(coalition: str, task: str) -> bool:
+    """Is this coalition defined for this task?"""
+    if coalition in NOT_IN_CAMPAIGN:
+        return False
+    if task == "regression" and coalition in COALITIONS:
+        return coalition in REGRESSION_NATIVE
+    return coalition in all_coalitions()
+
+
+def native_coalitions(task: str) -> list[str]:
+    """Native-axis coalitions for a task, in submission order."""
+    base = ["base", "A1", "A2", "A3", "A1A2", "A1A3", "A2A3", "A1A2A3", "shipped"]
+    return [c for c in base if coalition_applies(c, task)]
+
+
+def tabicl_kwargs(coalition: str, task: str) -> Dict[str, Any]:
+    """Constructor kwargs for the native TabICL estimator of this task."""
+    kw = dict(all_coalitions()[coalition])
+    if task == "regression":
+        kw.pop("class_shuffle_method", None)
+    return kw
+
+
+#: coalition sets for the TabICLv2 campaign, in the order worth spending compute
+#: on. ``lofo`` is M near-full fits per cell, so it is gated to small buckets.
+TABICL_SETS: Dict[str, list[str]] = {
+    "native": ["base", "A1", "A2", "A3", "A1A2", "A1A3", "A2A3", "A1A2A3", "shipped"],
+    "a4": A4_SWEEP + A4_VARIANTS,
+    "a5": ["A5_f25", "A5_f50", "A5_f75", "A5_f90", "A5bal_f50"],
+    "lofo": ["A5lofo_M8", "A5lofo_M16", "A5lofo_M32", "A5lofo_M64"],
+}
+TABICL_SETS["all"] = [c for k in ("native", "a4", "a5", "lofo") for c in TABICL_SETS[k]]
+
+#: buckets each wrapper set may run on (cost: M fits per cell)
+SET_BUCKETS = {"native": ("small", "medium", "large"),
+               "a4": ("small", "medium", "large"),
+               "a5": ("small", "medium", "large"),
+               "lofo": ("small", "medium")}
+
+
+def tabicl_coalition_set(name: str, task: str, n_features: int | None,
+                         bucket: str | None = None) -> list[str]:
+    """Coalitions of set ``name`` that are meaningful for this task and table."""
+    if name not in TABICL_SETS:
+        raise KeyError(f"unknown TabICL set {name!r}; have {sorted(TABICL_SETS)}")
+    out = []
+    for c in TABICL_SETS[name]:
+        if not coalition_applies(c, task):
+            continue
+        if n_features is not None and not a4_applicable(c, n_features):
+            continue
+        if c in LOFO_COALITIONS and bucket is not None and bucket not in SET_BUCKETS["lofo"]:
+            continue
+        out.append(c)
+    return out

@@ -90,6 +90,7 @@ print("\n=== run_cell writes the shared cache layout ===")
 ds=types.ModuleType("experiments.datasets")
 ds.load_splits=lambda n: iter([(X.iloc[:220],y[:220],X.iloc[220:],y[220:])])
 ds.split_severity=lambda n,k:"ok"
+ds.dataset_task=lambda n:"classification"
 sys.modules["experiments.datasets"]=ds
 import importlib, experiments.run_cell_tabfm as RC; importlib.reload(RC)
 with tempfile.TemporaryDirectory() as td:

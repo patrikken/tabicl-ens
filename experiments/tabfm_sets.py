@@ -22,7 +22,7 @@ The sets, in the order worth spending compute on:
 
 from __future__ import annotations
 
-from experiments.tabfm_capture import TABFM_COALITIONS
+from experiments.tabfm_capture import TABFM_COALITIONS, tabfm_coalitions
 
 #: a 25% column draw of 6 columns is 2 columns; the collapse there is about the
 #: dataset, not about ensembling. Same gate as the TabICLv2 A4 campaign.
@@ -41,14 +41,22 @@ SETS["all"] = [c for s in ("axes", "withhold", "expand", "plus", "new")
                for c in SETS[s]]
 
 
-def coalition_set(name: str, n_features: int | None = None) -> list[str]:
-    """Coalitions in set ``name`` that are meaningful at this table width."""
+def coalition_set(name: str, n_features: int | None = None,
+                  task: str = "classification") -> list[str]:
+    """Coalitions in set ``name`` that exist for ``task`` and fit this table width.
+
+    Regression drops everything that needs classes or logits (A2 and its mixes,
+    the calibration ablation); ``SETS`` stays the classification vocabulary and
+    the task filter is applied here so the two never drift.
+    """
     if name not in SETS:
         raise KeyError(f"unknown set {name!r}; have {sorted(SETS)}")
-    out = SETS[name]
+    avail = tabfm_coalitions(task)
+    out = [c for c in SETS[name] if c in avail]
     if n_features is not None and n_features < A4_MIN_FEATURES:
         out = [c for c in out if not c.startswith("A4_")]
-    missing = [c for c in out if c not in TABFM_COALITIONS]
-    if missing:
-        raise KeyError(f"coalitions not defined: {missing}")
+    if task == "classification":
+        missing = [c for c in SETS[name] if c not in TABFM_COALITIONS]
+        if missing:
+            raise KeyError(f"coalitions not defined: {missing}")
     return out

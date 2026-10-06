@@ -28,13 +28,17 @@ import torch
 
 from experiments.capture import (
     MemberCapturingTabICLClassifier,
+    MemberCapturingTabICLRegressor,
+    default_checkpoint,
     verify_equivalence,
+    verify_equivalence_regression,
 )
 from experiments.coalitions import (COALITIONS, CONTEXT_COALITIONS,
                                     CONTEXT_DEFAULT_M, FEATURE_SUB_DEFAULT_M,
-                                    all_coalitions, destroys_information,
-                                    is_context, is_feature_sub)
-from experiments.datasets import load_splits, split_severity
+                                    all_coalitions, coalition_applies,
+                                    destroys_information, is_context,
+                                    is_feature_sub, tabicl_kwargs)
+from experiments.datasets import dataset_task, load_splits, split_severity
 
 CHECKPOINT = "tabicl-classifier-v2-20260212.ckpt"
 
@@ -57,9 +61,16 @@ def run_cell(
     verify: bool = False,
     device: str | None = None,
 ) -> None:
+    task = dataset_task(dataset)
+    reg = task == "regression"
+    if not coalition_applies(coalition, task):
+        print(f"[n/a] {coalition} is not defined for {task} ({dataset}); nothing to do",
+              flush=True)
+        return
+    ckpt = default_checkpoint(task)
     ctx = is_context(coalition)
     fsub = is_feature_sub(coalition)
-    kwargs = all_coalitions()[coalition]
+    kwargs = tabicl_kwargs(coalition, task)
     # LOFO (rows or columns): M is determined by the partition, not chosen.
     _folds = kwargs.get("n_folds")
     if _folds:
@@ -69,6 +80,7 @@ def run_cell(
     tabicl_sha = _git_sha(os.environ.get("TABICL_REPO", "."))
     code_sha = _git_sha(os.environ.get("CODE_ROOT", "."))
 
+    _verified = False
     for k, (X_tr, y_tr, X_te, y_te) in enumerate(load_splits(dataset)):
         cell = out_root / dataset / coalition / f"split{k}"
         if (cell / "meta.json").exists():
@@ -84,7 +96,7 @@ def run_cell(
             from experiments.context import ContextEnsemble
 
             ce = ContextEnsemble(n_estimators=n_estimators, seed=seed,
-                                 device=device, checkpoint=CHECKPOINT, **kwargs)
+                                 device=device, checkpoint=ckpt, task=task, **kwargs)
             members = ce.fit_predict_members(X_tr, y_tr, X_te)
             t_fit = ce.timings["fit_seconds"]
             t_pred = ce.timings["predict_seconds"]
@@ -99,8 +111,8 @@ def run_cell(
             from experiments.subsample import FeatureSubsampleEnsemble
 
             fe = FeatureSubsampleEnsemble(n_estimators=n_estimators, seed=seed,
-                                          device=device, checkpoint=CHECKPOINT,
-                                          **kwargs)
+                                          device=device, checkpoint=ckpt,
+                                          task=task, **kwargs)
             members = fe.fit_predict_members(X_tr, y_tr, X_te)
             t_fit = fe.timings["fit_seconds"]
             t_pred = fe.timings["predict_seconds"]
@@ -109,13 +121,15 @@ def run_cell(
             extra = {k: v for k, v in fe.timings.items()
                      if k not in ("fit_seconds", "predict_seconds")}
         else:
-            clf = MemberCapturingTabICLClassifier(
+            Est = MemberCapturingTabICLRegressor if reg else MemberCapturingTabICLClassifier
+            clf = Est(
                 n_estimators=n_estimators,
-                checkpoint_version=CHECKPOINT,
+                checkpoint_version=ckpt,
                 random_state=seed,
                 device=device,
-                # Left at defaults on purpose: average_logits=True means members
-                # are LOGITS, which keeps every aggregator available post hoc.
+                # Classification, left at defaults on purpose: average_logits=True
+                # means members are LOGITS, which keeps every aggregator available
+                # post hoc. Regression members are original-scale predictive means.
                 # kv_cache stays off: the cached path does not take
                 # feature_shuffles, so it may not preserve member semantics.
                 **kwargs,
@@ -125,17 +139,25 @@ def run_cell(
             clf.fit(X_tr, y_tr)
             t_fit = time.perf_counter() - t_fit
 
-            if verify:
-                verify_equivalence(clf, X_te[:64])
+            # Regression is verified once per process by default (cheap, and the
+            # path is new); classification keeps its opt-in.
+            if (verify or reg) and not _verified:
+                (verify_equivalence_regression if reg else verify_equivalence)(
+                    clf, X_te[:64])
+                _verified = True
+                print("[verify] member capture == predict", flush=True)
 
             t_pred = time.perf_counter()
             members = clf.predict_members(X_te)
             t_pred = time.perf_counter() - t_pred
-            avg_logits = bool(clf.average_logits)
-            temperature = float(clf.softmax_temperature)
+            avg_logits = False if reg else bool(clf.average_logits)
+            temperature = None if reg else float(clf.softmax_temperature)
 
         m_realised = int(members.shape[0])
-        np.save(cell / "members.npy", members.astype(np.float16))
+        # float16 is fine for classification logits (|logit| < ~50) and halves the
+        # cache; regression predictions live on the target scale, so float32.
+        np.save(cell / "members.npy",
+                members.astype(np.float32 if reg else np.float16))
         np.save(cell / "y_test.npy", np.asarray(y_te))
 
         sev = split_severity(dataset, k)
@@ -154,7 +176,9 @@ def run_cell(
             "truncated": m_realised < n_estimators,
             "average_logits": avg_logits,
             "softmax_temperature": temperature,
-            "space": "logits" if avg_logits else "probabilities",
+            "task": task,
+            "space": ("predictions" if reg
+                      else "logits" if avg_logits else "probabilities"),
             # The perturbation 2x2: where the axis acts, and whether it
             # withholds data from the member. A1-A3 preserve, A4/A5 destroy.
             "axis_side": "context" if ctx else "feature",
@@ -164,9 +188,10 @@ def run_cell(
             "n_train": int(np.asarray(X_tr).shape[0]),
             "n_test": int(np.asarray(X_te).shape[0]),
             "n_features": int(np.asarray(X_tr).shape[1]),
-            "n_classes": int(len(np.unique(y_tr))),
+            "n_classes": None if reg else int(len(np.unique(y_tr))),
+            "y_train_std": float(np.std(np.asarray(y_tr, dtype=float))) if reg else None,
             "seed": seed,
-            "checkpoint": CHECKPOINT,
+            "checkpoint": ckpt,
             "tabicl_sha": tabicl_sha,
             "code_sha": code_sha,
             "fit_seconds": t_fit,

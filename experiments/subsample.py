@@ -63,7 +63,7 @@ import numpy as np
 # column importance
 # ---------------------------------------------------------------------------
 def column_importance(X, y, seed: int = 0, max_rows: int = 10_000,
-                      n_trees: int = 100) -> np.ndarray:
+                      n_trees: int = 100, task: str = "classification") -> np.ndarray:
     """Model-free-ish per-column importance, computed on TRAIN only.
 
     An ExtraTrees fit on an ordinal encoding of the columns. Cheap (CPU,
@@ -80,7 +80,7 @@ def column_importance(X, y, seed: int = 0, max_rows: int = 10_000,
     precisely the contrast the mode is there to measure. There is no test-set
     leakage -- the test split is never touched.
     """
-    from sklearn.ensemble import ExtraTreesClassifier
+    from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
     from sklearn.impute import SimpleImputer
     from sklearn.preprocessing import OrdinalEncoder
 
@@ -111,8 +111,8 @@ def column_importance(X, y, seed: int = 0, max_rows: int = 10_000,
             Z = SimpleImputer(strategy="median").fit_transform(Z)
             order = list(range(d))
 
-        et = ExtraTreesClassifier(n_estimators=n_trees, random_state=seed,
-                                  n_jobs=-1)
+        Trees = ExtraTreesRegressor if task == "regression" else ExtraTreesClassifier
+        et = Trees(n_estimators=n_trees, random_state=seed, n_jobs=-1)
         et.fit(Z, np.asarray(y)[idx])
 
         imp = np.zeros(d, dtype=float)
@@ -288,6 +288,7 @@ class FeatureSubsampleEnsemble:
     min_features: int = 2
     device: str | None = None
     checkpoint: str = "tabicl-classifier-v2-20260212.ckpt"
+    task: str = "classification"    # classification | regression
     seed: int = 0
     timings: dict = field(default_factory=dict)
     #: mirrored from the fitted members so run_cell records how the cached
@@ -295,13 +296,21 @@ class FeatureSubsampleEnsemble:
     average_logits: bool = True
     softmax_temperature: float = 0.9
 
+    def __post_init__(self):
+        if self.task == "regression" and "classifier" in self.checkpoint:
+            self.checkpoint = self.checkpoint.replace("classifier", "regressor")
+
     def fit_predict_members(self, X_tr, y_tr, X_te) -> np.ndarray:
-        """Return aligned ``(M, n_test, n_classes)`` member LOGITS."""
-        from experiments.capture import MemberCapturingTabICLClassifier
+        """Return aligned member outputs.
+
+        Classification: ``(M, n_test, n_classes)`` LOGITS. Regression:
+        ``(M, n_test)`` predictions on the original target scale.
+        """
+        from experiments.capture import align_member, member_estimator
 
         y_tr = np.asarray(y_tr)
         rng = np.random.default_rng(self.seed)
-        all_classes = np.unique(y_tr)
+        all_classes = None if self.task == "regression" else np.unique(y_tr)
         d = np.asarray(X_tr).shape[1]
 
         if self.mode == "lofo":
@@ -313,7 +322,7 @@ class FeatureSubsampleEnsemble:
         t_imp = 0.0
         if self.mode == "importance":
             t0 = time.perf_counter()
-            imp = column_importance(X_tr, y_tr, seed=self.seed)
+            imp = column_importance(X_tr, y_tr, seed=self.seed, task=self.task)
             t_imp = time.perf_counter() - t0
         # a flat vector means the scorer fell back; record it rather than
         # silently reporting a uniform draw as importance-weighted.
@@ -330,32 +339,12 @@ class FeatureSubsampleEnsemble:
             usage[cols] += 1
 
         for m, cols in enumerate(subsets):
-            clf = MemberCapturingTabICLClassifier(
-                n_estimators=1,
-                feat_shuffle_method="none",
-                class_shuffle_method="none",
-                norm_methods=["none"],
-                checkpoint_version=self.checkpoint,
-                random_state=self.seed + m,
-                device=self.device,
-            )
+            clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device)
             t0 = time.perf_counter()
             clf.fit(_take_columns(X_tr, cols), y_tr)
             t_fit += time.perf_counter() - t0
 
-            cls = np.asarray(clf.classes_)
-            if ref_classes is None:
-                ref_classes = cls
-                self.average_logits = bool(clf.average_logits)
-                self.softmax_temperature = float(clf.softmax_temperature)
-                if len(cls) != len(all_classes):
-                    raise RuntimeError(
-                        f"member 0 fitted {len(cls)} classes but the pool has "
-                        f"{len(all_classes)}.")
-            elif not np.array_equal(cls, ref_classes):
-                raise RuntimeError(
-                    f"member {m} fitted a different class set ({cls} vs "
-                    f"{ref_classes}); member columns would not align.")
+            ref_classes = align_member(self, clf, m, ref_classes, all_classes)
 
             t0 = time.perf_counter()
             p = clf.predict_members(_take_columns(X_te, cols))   # (1, n_test, C)

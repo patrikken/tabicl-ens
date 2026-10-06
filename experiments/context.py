@@ -43,6 +43,24 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+def strata(y, task: str = "classification", max_bins: int = 10,
+           min_bin: int = 20) -> np.ndarray:
+    """Stratification labels: the classes themselves, or quantile bins of y.
+
+    Regression has no classes, but the context draws still need to keep the
+    target distribution (a random draw can miss the tails, and then a member is
+    a different problem, not a different view). Quantile bins give the same
+    stratified-with-floor and class-balanced constructions a meaning there.
+    """
+    y = np.asarray(y)
+    if task != "regression":
+        return y
+    n = len(y)
+    nb = int(np.clip(n // min_bin, 2, max_bins))
+    edges = np.unique(np.quantile(y.astype(float), np.linspace(0, 1, nb + 1)[1:-1]))
+    return np.digitize(y.astype(float), edges)
+
+
 def subsample_indices(y, frac: float, rng: np.random.Generator,
                       mode: str = "random", min_per_class: int = 4) -> np.ndarray:
     """Row indices for one context draw of size ~``frac`` of the pool.
@@ -143,6 +161,7 @@ class ContextEnsemble:
     min_per_class: int = 4
     device: str | None = None
     checkpoint: str = "tabicl-classifier-v2-20260212.ckpt"
+    task: str = "classification"   # classification | regression
     seed: int = 0
     timings: dict = field(default_factory=dict)
     #: mirrored from the fitted members so run_cell can record how the cached
@@ -150,20 +169,30 @@ class ContextEnsemble:
     average_logits: bool = True
     softmax_temperature: float = 0.9
 
+    def __post_init__(self):
+        if self.task == "regression" and "classifier" in self.checkpoint:
+            self.checkpoint = self.checkpoint.replace("classifier", "regressor")
+
     def fit_predict_members(self, X_tr, y_tr, X_te) -> np.ndarray:
-        """Return aligned ``(M, n_test, n_classes)`` member LOGITS."""
-        from experiments.capture import MemberCapturingTabICLClassifier
+        """Return aligned member outputs.
+
+        Classification: ``(M, n_test, n_classes)`` LOGITS. Regression:
+        ``(M, n_test)`` predictions on the original target scale.
+        """
+        from experiments.capture import align_member, member_estimator
 
         y_tr = np.asarray(y_tr)
         rng = np.random.default_rng(self.seed)
-        all_classes = np.unique(y_tr)
+        reg = self.task == "regression"
+        all_classes = None if reg else np.unique(y_tr)
+        strat = strata(y_tr, self.task)
 
         lofo_members = None
         if self.mode == "lofo":
             # M is a consequence of the partition, not a free parameter.
             self.n_estimators = int(self.n_folds or self.n_estimators)
             self.frac = 1.0 - 1.0 / self.n_estimators
-            lofo_members, pinned = lofo_partition(y_tr, self.n_estimators, rng)
+            lofo_members, pinned = lofo_partition(strat, self.n_estimators, rng)
             self._n_pinned = int(len(pinned))
 
         members, ref_classes = [], None
@@ -172,43 +201,23 @@ class ContextEnsemble:
 
         for m in range(self.n_estimators):
             idx = (lofo_members[m] if lofo_members is not None
-                   else subsample_indices(y_tr, self.frac, rng, self.mode,
+                   else subsample_indices(strat, self.frac, rng, self.mode,
                                           self.min_per_class))
             sizes.append(int(len(idx)))
             if prev is not None:
                 overlaps.append(len(np.intersect1d(idx, prev)) / max(1, len(idx)))
             prev = idx
 
-            clf = MemberCapturingTabICLClassifier(
-                n_estimators=1,
-                feat_shuffle_method="none",
-                class_shuffle_method="none",
-                norm_methods=["none"],
-                checkpoint_version=self.checkpoint,
-                random_state=self.seed + m,
-                device=self.device,
-            )
+            clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device)
             t0 = time.perf_counter()
             clf.fit(X_tr.iloc[idx] if hasattr(X_tr, "iloc") else X_tr[idx],
                     y_tr[idx])
             t_fit += time.perf_counter() - t0
 
-            cls = np.asarray(clf.classes_)
-            if ref_classes is None:
-                ref_classes = cls
-                self.average_logits = bool(clf.average_logits)
-                self.softmax_temperature = float(clf.softmax_temperature)
-                if len(cls) != len(all_classes):
-                    raise RuntimeError(
-                        f"member 0 fitted {len(cls)} classes but the pool has "
-                        f"{len(all_classes)}; raise min_per_class or frac.")
-            elif not np.array_equal(cls, ref_classes):
-                raise RuntimeError(
-                    f"member {m} fitted a different class set ({cls} vs "
-                    f"{ref_classes}); member columns would not align.")
+            ref_classes = align_member(self, clf, m, ref_classes, all_classes)
 
             t0 = time.perf_counter()
-            p = clf.predict_members(X_te)          # (1, n_test, C)
+            p = clf.predict_members(X_te)          # (1, n_test[, C])
             t_pred += time.perf_counter() - t0
             members.append(p[0])
             del clf

@@ -17,9 +17,10 @@ class Stub:
             "train/test column sets differ for the same member"
         rs=np.random.default_rng(abs(hash(tuple(self.cols or []))) % 2**31)
         return rs.normal(size=(1,np.asarray(X).shape[0],len(self.classes_)))
-cap=types.ModuleType("experiments.capture"); cap.MemberCapturingTabICLClassifier=Stub
-cap.verify_equivalence=lambda *a,**k: None
-sys.modules["experiments.capture"]=cap
+ti=types.ModuleType("tabicl"); ti.TabICLClassifier=Stub; ti.TabICLRegressor=Stub
+sys.modules["tabicl"]=ti
+import experiments.capture as cap            # the REAL module: it owns member_estimator / align_member
+cap.MemberCapturingTabICLClassifier=Stub     # member_estimator looks this global up at call time
 
 from experiments.subsample import FeatureSubsampleEnsemble
 

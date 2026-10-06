@@ -69,9 +69,31 @@ def _manifest() -> dict:
     return json.loads(f.read_text())
 
 
-def tabarena_datasets() -> list[str]:
-    """Dataset names in the manifest, sorted. Used by the SLURM array."""
-    return sorted(_manifest())
+def tabarena_datasets(task: str | None = "classification") -> list[str]:
+    """Dataset names in the manifest, sorted. Used by the SLURM arrays.
+
+    ``task`` filters on the manifest's ``problem_type``: ``"classification"``
+    (default, so every pre-regression script keeps its behaviour once the
+    manifest also holds regression datasets), ``"regression"``, or ``None`` for
+    everything.
+    """
+    m = _manifest()
+    names = sorted(m)
+    if task is None:
+        return names
+    return [n for n in names if _task_of(m[n].get("problem_type")) == task]
+
+
+def _task_of(problem_type) -> str:
+    return "regression" if str(problem_type).lower() == "regression" else "classification"
+
+
+def dataset_task(name: str) -> str:
+    """'classification' | 'regression'. The OpenML pilot backend is classification."""
+    try:
+        return _task_of(_manifest()[name].get("problem_type"))
+    except Exception:                                      # noqa: BLE001
+        return "classification"
 
 
 def dataset_info(name: str) -> dict:
@@ -105,7 +127,8 @@ def _load_tabarena(name: str) -> Iterator[Split]:
     info = _manifest()[name]
     ds = openml.datasets.get_dataset(info["openml_dataset_id"], download_data=True)
     X, y, _, _ = ds.get_data(target=info["label"], dataset_format="dataframe")
-    y = np.asarray(y)
+    y = np.asarray(y, dtype=np.float64) if _task_of(info.get("problem_type")) == "regression" \
+        else np.asarray(y)
 
     z = np.load(TABARENA_DIR / "splits" / f"{name}.npz")
     for s in info["splits"]:

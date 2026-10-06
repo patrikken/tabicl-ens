@@ -62,15 +62,20 @@ def to_metric_error(score: np.ndarray | pd.Series, task: np.ndarray | pd.Series
     Ours (both higher-is-better, never pooled):
         binary      ROC-AUC
         multiclass  mean log-likelihood, i.e. -log_loss
+        regression  -RMSE (original target scale)
     TabArena's, per its task metadata ``eval_metric``:
         binary      roc_auc     -> metric_error = 1 - AUC
         multiclass  log_loss    -> metric_error = log_loss = -score
+        regression  rmse        -> metric_error = RMSE = -score
 
     Verified against the shipped TabFM parquet, whose ``roc_auc`` rows carry
     1 - AUC (e.g. Amazon_employee_access fold 0 at 0.1493).
     """
     score = np.asarray(score, dtype=float)
     task = np.asarray(task)
+    unknown = set(np.unique(task)) - {"binary", "multiclass", "regression"}
+    if unknown:
+        raise ValueError(f"unknown task label(s) {sorted(unknown)}")
     out = np.where(task == "binary", 1.0 - score, -score)
     if not np.isfinite(out).all():
         raise ValueError("non-finite metric_error; sanitize the scores first")

@@ -26,7 +26,7 @@ try:  # sklearn >= 1.6
 except ImportError:  # pragma: no cover
     validate_data = None
 
-from tabicl import TabICLClassifier
+from tabicl import TabICLClassifier, TabICLRegressor
 
 
 class MemberCapturingTabICLClassifier(TabICLClassifier):
@@ -116,3 +116,118 @@ def verify_equivalence(clf, X, atol: float = 0.0) -> None:
         )
     else:
         np.testing.assert_allclose(ours, theirs, atol=atol)
+
+
+# ---------------------------------------------------------------------------
+# Regression
+# ---------------------------------------------------------------------------
+class MemberCapturingTabICLRegressor(TabICLRegressor):
+    """TabICLRegressor that can return per-ensemble-member predictions.
+
+    Mirrors ``TabICLRegressor.predict`` (tabicl v2.2.0,
+    ``src/tabicl/_sklearn/regressor.py``) up to the aggregation step. predict():
+
+        data = ensemble_generator_.transform(X, mode="both")
+        for Xs, ys in data.values():  results.append(_batch_forward(Xs, ys, "mean"))
+        arr = concatenate(results)                                # (E, T) scaled
+        arr = y_scaler_.inverse_transform(arr.reshape(-1, 1)).reshape(E, T)
+        return arr.mean(axis=0)                                   # the ONLY aggregator
+
+    so a member here is one view's predictive MEAN on the ORIGINAL target scale,
+    and the shipped aggregator is the arithmetic mean over members. The kv-cache
+    path is not mirrored (it is off in every run; see run_cell.py).
+    """
+
+    def predict_members(self, X) -> np.ndarray:
+        """Return ``(M_realised, n_test)`` per-member predictions, original scale."""
+        check_is_fitted(self)
+        if getattr(self, "model_kv_cache_", None) is not None:
+            raise RuntimeError("kv_cache is not mirrored by predict_members; "
+                               "construct with kv_cache=False")
+        if validate_data is not None:
+            X = validate_data(self, X, reset=False, dtype=None, skip_check_array=True)
+        X = self.X_encoder_.transform(X)
+
+        data = self.ensemble_generator_.transform(X, mode="both")
+        outs = [self._batch_forward(Xs, ys, output_type="mean")
+                for Xs, ys in data.values()]
+        arr = np.concatenate(outs, axis=0)                     # (E, T), scaled
+        E, T = arr.shape
+        return self.y_scaler_.inverse_transform(arr.reshape(-1, 1)).reshape(E, T)
+
+    @property
+    def m_realised_(self) -> int:
+        """Actual member count (tabicl truncates the view product to n_estimators)."""
+        check_is_fitted(self)
+        return int(sum(len(v) for v in self.ensemble_generator_.feature_shuffles_.values()))
+
+
+def aggregate_regression(members: np.ndarray) -> np.ndarray:
+    """tabicl's shipped regression aggregation: arithmetic mean over members."""
+    return np.mean(members, axis=0)
+
+
+def verify_equivalence_regression(reg, X, atol: float = 0.0) -> None:
+    """Assert captured-then-averaged == ``predict`` (bitwise by default)."""
+    ours = aggregate_regression(reg.predict_members(X))
+    theirs = reg.predict(X)
+    if atol == 0.0:
+        if not np.array_equal(ours, theirs):
+            d = float(np.abs(ours - theirs).max())
+            raise AssertionError(
+                f"Regression member capture diverges from predict (max |delta| {d:.3e}). "
+                "Upstream aggregation likely changed; re-read regressor.py::predict.")
+    else:
+        np.testing.assert_allclose(ours, theirs, atol=atol)
+
+
+# ---------------------------------------------------------------------------
+# Shared by the A4 / A5 wrappers (subsample.py, context.py), which fit one
+# single-member estimator per draw and must work for both tasks.
+# ---------------------------------------------------------------------------
+CKPT_CLASSIFIER = "tabicl-classifier-v2-20260212.ckpt"
+CKPT_REGRESSOR = "tabicl-regressor-v2-20260212.ckpt"
+
+
+def default_checkpoint(task: str) -> str:
+    return CKPT_REGRESSOR if task == "regression" else CKPT_CLASSIFIER
+
+
+def member_estimator(task: str, checkpoint: str, seed: int, device):
+    """One unperturbed single-member estimator: every native axis off."""
+    if task == "regression":
+        return MemberCapturingTabICLRegressor(
+            n_estimators=1, feat_shuffle_method="none", norm_methods=["none"],
+            checkpoint_version=checkpoint, random_state=seed, device=device)
+    return MemberCapturingTabICLClassifier(
+        n_estimators=1, feat_shuffle_method="none", class_shuffle_method="none",
+        norm_methods=["none"], checkpoint_version=checkpoint,
+        random_state=seed, device=device)
+
+
+def align_member(owner, clf, m, ref_classes, all_classes):
+    """Record aggregation metadata from member 0 and check class alignment.
+
+    Regression has no class axis, so there is nothing to align and the cached
+    members are original-scale predictions (``average_logits`` is False).
+    """
+    if getattr(owner, "task", "classification") == "regression":
+        if ref_classes is None:
+            owner.average_logits = False
+            owner.softmax_temperature = float("nan")
+            return np.array([])
+        return ref_classes
+    cls = np.asarray(clf.classes_)
+    if ref_classes is None:
+        owner.average_logits = bool(clf.average_logits)
+        owner.softmax_temperature = float(clf.softmax_temperature)
+        if len(cls) != len(all_classes):
+            raise RuntimeError(
+                f"member 0 fitted {len(cls)} classes but the pool has "
+                f"{len(all_classes)}; raise min_per_class or frac.")
+        return cls
+    if not np.array_equal(cls, ref_classes):
+        raise RuntimeError(
+            f"member {m} fitted a different class set ({cls} vs {ref_classes}); "
+            "member columns would not align.")
+    return ref_classes
