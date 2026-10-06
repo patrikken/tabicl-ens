@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tfm-tabfm
-#SBATCH --account=def-CHANGEME
-#SBATCH --gres=gpu:h100:1
+#SBATCH --account=aip-ebrahimi
+#SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
@@ -34,7 +34,7 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 export SPLIT_BACKEND=tabarena

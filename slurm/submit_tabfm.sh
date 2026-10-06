@@ -26,19 +26,20 @@
 #   PY
 
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 SET="${TABFM_SET:-axes}"
 BUCKETS=("${@:-small}")
 
 #          time      mem  concurrent
-CONF_small="06:00:00 64G 10"
-CONF_medium="12:00:00 96G 5"
-CONF_large="24:00:00 128G 2"
+CONF_small="00:25:00 64G 20"
+CONF_medium="00:50:00 96G 15"
+CONF_large="00:60:00 128G 10"
 
 export SPLIT_BACKEND=tabarena
 export TABFM_CKPT="${TABFM_CKPT:-$PROJECT_ROOT/tabfm-ckpt}"
+export TABARENA_DIR="${TABARENA_DIR:-$PROJECT_ROOT/tabarena-splits}"
 mkdir -p logs
 
 if [ ! -d "$TABFM_CKPT" ]; then

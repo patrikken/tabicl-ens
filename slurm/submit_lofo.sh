@@ -14,16 +14,16 @@
 # M=64 is roughly 4x M=16 per cell. Small bucket first.
 
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 N_COAL=4
-BUCKETS=("${@:-small}")
+BUCKETS=(small medium large)
 
 #          time      mem  concurrent
-CONF_small="12:00:00 48G 10"
-CONF_medium="24:00:00 64G 5"
-CONF_large="24:00:00 96G 2"
+CONF_small="00:20:00 48G 20"
+CONF_medium="00:40:00 64G 15"
+CONF_large="00:60:00 96G 10"
 
 export SPLIT_BACKEND=tabarena
 mkdir -p logs

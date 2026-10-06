@@ -24,16 +24,16 @@
 # plan below prints the real task count rather than datasets x coalitions.
 
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
-A4_SET="${A4_SET:-sweep}"
-BUCKETS=("${@:-small}")
+A4_SET="${A4_SET:-variants}"
+BUCKETS=(small medium large)
 
 #          time      mem  concurrent
-CONF_small="06:00:00 48G 12"
-CONF_medium="16:00:00 64G 6"
-CONF_large="24:00:00 96G 3"
+CONF_small="00:20:00 48G 16"
+CONF_medium="00:40:00 64G 16"
+CONF_large="00:20:00 96G 16"
 
 export SPLIT_BACKEND=tabarena
 mkdir -p logs

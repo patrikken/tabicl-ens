@@ -12,16 +12,16 @@
 # their compute.
 
 set -euo pipefail
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 N_COAL=5                      # A5_f25 f50 f75 f90 + A5bal_f50
-BUCKETS=("${@:-small}")
+BUCKETS=("${BUCKETS:-large}")
 
 #          time      mem  concurrent
-CONF_small="06:00:00 48G 12"
-CONF_medium="16:00:00 64G 6"
-CONF_large="24:00:00 96G 3"
+CONF_small="00:15:00 48G 15"
+CONF_medium="00:20:00 64G 10"
+CONF_large="00:40:00 96G 10"
 
 export SPLIT_BACKEND=tabarena
 mkdir -p logs

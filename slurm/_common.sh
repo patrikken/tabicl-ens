@@ -50,11 +50,11 @@ export PROJECT_ROOT="${PROJECT_ROOT:-$SCRATCH/tabicl-ens}"
 export HF_HOME="${HF_HOME:-$PROJECT_ROOT/hf}"
 export OPENML_CACHE_DIR="${OPENML_CACHE_DIR:-$PROJECT_ROOT/openml}"
 export CACHE_DIR="${CACHE_DIR:-$PROJECT_ROOT/cache}"
-export VENV="${VENV:-$PROJECT_ROOT/venv}"
+export VENV="${VENV:-$PROJECT_ROOT/venv}" 
 # Official TabArena splits, materialised on a login node by
 # experiments/prepare_tabarena.py. The worker reads this instead of
 # importing tabarena (which pulls a pre-release autogluon + ray).
-export TABARENA_DIR="${TABARENA_DIR:-$PROJECT_ROOT/tabarena}"
+export TABARENA_DIR="${TABARENA_DIR:-$PROJECT_ROOT/tabarena-splits}"
 
 # Import from the checkout without depending on cwd. This is the actual fix.
 export PYTHONPATH="$CODE_ROOT${PYTHONPATH:+:$PYTHONPATH}"

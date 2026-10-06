@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tfm-ens-a5
-#SBATCH --account=def-CHANGEME
-#SBATCH --gres=gpu:h100:1
+#SBATCH --account=aip-ebrahimi
+#SBATCH --gres=gpu:h100:4
 #SBATCH --cpus-per-task=8
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
@@ -20,11 +20,11 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+source "slurm/_common.sh"
 cc_activate
 
 export SPLIT_BACKEND=tabarena
-BUCKET="${BUCKET:-small}"
+BUCKET="${BUCKET:-all}"
 COALITIONS=(A5_f25 A5_f50 A5_f75 A5_f90 A5bal_f50)
 N_COAL=${#COALITIONS[@]}
 
