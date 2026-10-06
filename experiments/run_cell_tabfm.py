@@ -4,7 +4,7 @@ Mirrors ``experiments/run_cell.py`` and writes the SAME cache layout, so the
 whole downstream analysis -- scoring, M_eff, the recovery decomposition, Elo --
 runs unchanged over both models:
 
-    <out>/<dataset>/<coalition>/split<k>/members.npy   float16 (M, n_test, C)
+    <out>/<dataset>/<coalition>/split<k>/members.npy   float32 (M, n_test, C)  # NOT float16: TabFM logits reach ~1e3, where float16 spacing is 0.5-1 and ties the ranking
     <out>/<dataset>/<coalition>/split<k>/meta.json
     <out>/<dataset>/<coalition>/split<k>/y_test.npy
 
@@ -87,7 +87,7 @@ def run_cell(dataset: str, coalition: str, n_estimators: int, out_root: Path,
         t_pred = time.perf_counter() - t0
 
         m_realised = int(members.shape[0])
-        np.save(cell / "members.npy", members.astype(np.float16))
+        np.save(cell / "members.npy", members.astype(np.float32))
         np.save(cell / "y_test.npy", np.asarray(y_te))
 
         sev = split_severity(dataset, k)
