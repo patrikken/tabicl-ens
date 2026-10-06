@@ -90,8 +90,6 @@ def fig_meff(df):
     ax.text(0.995, -0.30, "pale bars: structurally capped below $M=32$",
             transform=ax.transAxes, ha="right", va="top",
             fontsize=7, color=MUTED)
-    ax.set_title("Thirty-two members buy about 1.4 independent predictions",
-                 loc="left", pad=6)
     ax.grid(axis="y", visible=False)
     ax.set_axisbelow(True)
     despine(ax, left=False)
@@ -140,9 +138,6 @@ def fig_budget(df, d):
             a1.set_ylabel("gain per GPU-second")
         despine(a1)
 
-    fig.suptitle("Return per unit of compute peaks at $M=8$, "
-                 "well below the shipped budget",
-                 x=0.005, ha="left", y=1.03, fontsize=9)
     fig.tight_layout(h_pad=0.9, w_pad=1.6)
     fig.savefig("fig_budget.pdf")
     plt.close(fig)
@@ -188,8 +183,6 @@ def fig_frontier(df, d):
         ax.margins(x=0.22, y=0.22)
         despine(ax)
     axes[0].set_ylabel("gain over one\nunperturbed pass")
-    fig.suptitle("The shipped mix is best on binary and dominated on multiclass",
-                 x=0.005, ha="left", y=1.04, fontsize=9)
     fig.tight_layout(w_pad=1.8)
     fig.savefig("fig_frontier.pdf")
     plt.close(fig)
@@ -248,8 +241,6 @@ def fig_phi(df, d):
         despine(ax, left=False)
         ax.tick_params(axis="y", length=0)
         ax.set_yticklabels([])
-    fig.suptitle("Ranking inverts once cost is accounted for (multiclass)",
-                 x=0.005, ha="left", y=1.05, fontsize=9)
     fig.tight_layout(w_pad=2.0)
     fig.savefig("fig_phi.pdf")
     plt.close(fig)
@@ -307,9 +298,6 @@ def fig_a5(df, d):
         despine(ax)
     axes[0].set_ylabel("score delta")
     axes[1].legend(loc="lower right", fontsize=7, handlelength=1.4)
-    fig.suptitle("Context perturbation buys real diversity and pays for it in "
-                 "member quality",
-                 x=0.005, ha="left", y=1.04, fontsize=9)
     fig.tight_layout(w_pad=1.8)
     fig.savefig("fig_a5.pdf")
     plt.close(fig)
@@ -340,9 +328,6 @@ def fig_a5_h1(df, d):
         ax.set_axisbelow(True)
         despine(ax, left=False)
         ax.tick_params(axis="y", length=0)
-    fig.suptitle("H1 confirmed: context-side perturbation decorrelates "
-                 "7--8$\\times$ better than feature-side",
-                 x=0.005, ha="left", y=1.05, fontsize=9)
     fig.tight_layout(w_pad=1.4)
     fig.savefig("fig_a5_h1.pdf")
     plt.close(fig)
