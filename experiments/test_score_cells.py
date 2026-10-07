@@ -86,3 +86,28 @@ check(np.isnan(g.loc["A7", "gain_ref"]) and np.isnan(g.loc["base", "gain_ref"]),
 g2 = add_ablation_gain(d, "tabfm").set_index("coalition")
 check(np.isclose(g2.loc["S_A4_g50", "gain_ref"], .05), "tabfm S_* vs shipped")
 print(f"{n_ok} checks passed (with ablations)")
+
+# ---- regression test for the cluster crash: a 16-member cell + ablations ------
+import tempfile, json
+from pathlib import Path
+root2 = Path(tempfile.mkdtemp())
+rng2 = np.random.default_rng(3)
+y2 = rng2.integers(0, 2, 120)
+for coal, M in (("base", 32), ("shipped", 32), ("S_ctl", 16), ("S_A4_g50", 16), ("A4lofo_M8", 8)):
+    mem = np.eye(2)[y2][None] * 2.0 + rng2.normal(size=(M, 120, 2))
+    write(root2, "d", coal, 0, mem.astype(np.float32), y2, task="binary", n_classes=2, softmax_temperature=0.9)
+rows2 = [sc.score_cell(m.parent, "tabicl") for m in sorted(root2.rglob("meta.json"))]
+sw2 = pd.DataFrame([x for r in rows2 for x in r[1]])
+check(not sw2.duplicated(subset=["dataset", "coalition", "split", "M"]).any(), "no duplicate budgets for M<32 cells")
+check(sorted(sw2[sw2.coalition == "S_ctl"].M) == [1, 2, 4, 8, 16], "16-member cell: budgets 1..16 once each")
+check(sorted(sw2[sw2.coalition == "A4lofo_M8"].M) == [1, 2, 4, 8], "8-member cell: budgets 1..8")
+f2 = sc.add_ablation_gain(sc.add_gain(sw2, extra=("M",)), "tabicl", extra=("M",))
+check(len(f2) == len(sw2), "ablation join keeps the row count")
+r = f2[(f2.coalition == "S_A4_g50") & (f2.M == 16)].iloc[0]
+c = f2[(f2.coalition == "S_ctl") & (f2.M == 16)].iloc[0]
+check(np.isclose(r.gain_ref, r.score - c.score), "gain_ref at the same M")
+# even if duplicates reach the join, it must not multiply rows or crash
+dupd = pd.concat([sw2, sw2.iloc[:5]], ignore_index=True)
+g3 = sc.add_ablation_gain(sc.add_gain(dupd, extra=("M",)), "tabicl", extra=("M",))
+check(len(g3) == len(dupd), "duplicates in the input cannot multiply rows")
+print(f"{n_ok} checks passed (incl. cluster-crash regression)")

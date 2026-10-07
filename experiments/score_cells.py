@@ -123,8 +123,9 @@ def score_cell(d: Path, model: str, budgets=BUDGETS, reps=REPS):
                 fit_s=meta.get("fit_seconds"), pred_s=meta.get("predict_seconds"),
                 y_train_std=meta.get("y_train_std"))
     sweep = []
-    for B in ([1] if M == 1 else budgets):
-        b = min(B, M)
+    # budgets above the cell's own M collapse onto M; keep each budget once, or a
+    # 16-member A4/A5 cell would emit M=16 three times and break every join
+    for b in ([1] if M == 1 else sorted({min(B, M) for B in budgets})):
         n = 1 if b == M else reps
         s = []
         for _ in range(n):
@@ -154,16 +155,19 @@ def reference_of(coalition: str, model: str) -> str | None:
 def add_ablation_gain(df: pd.DataFrame, model: str, keys=("dataset", "split"),
                       extra=()) -> pd.DataFrame:
     """Add ``ref`` and ``gain_ref`` (= score - the ablation reference's score on the
-    same dataset/split[/M]); NaN where a coalition has no reference."""
+    same dataset/split[/M]); NaN where a coalition has no reference or its
+    reference was not run on that cell. Implemented as a merge on unique keys, so
+    it can neither multiply rows nor fall back to a slow per-row lookup."""
     k = list(keys) + list(extra)
     out = df.copy()
     out["ref"] = [reference_of(c, model) for c in out.coalition]
-    sc = out.set_index(k + ["coalition"])["score"]
-    idx = list(zip(*[out[c] for c in k], out["ref"]))
-    out["gain_ref"] = out["score"].to_numpy() - np.array(
-        [sc.get(i, np.nan) if i[-1] else np.nan for i in idx], dtype=float)
-    out.loc[out["ref"].isna(), "gain_ref"] = np.nan
-    return out
+    ref = (out.drop_duplicates(subset=k + ["coalition"])[k + ["coalition", "score"]]
+           .rename(columns={"coalition": "ref", "score": "_ref_score"}))
+    n = len(out)
+    out = out.merge(ref, on=k + ["ref"], how="left")
+    assert len(out) == n, "reference join changed the row count"
+    out["gain_ref"] = out["score"] - out["_ref_score"]
+    return out.drop(columns="_ref_score")
 
 
 def add_gain(df: pd.DataFrame, keys=("dataset", "split"), extra=()) -> pd.DataFrame:
@@ -171,7 +175,8 @@ def add_gain(df: pd.DataFrame, keys=("dataset", "split"), extra=()) -> pd.DataFr
     ``rel_gain`` is gain / |base score| for regression (relative RMSE reduction)
     and NaN otherwise -- AUC and log-loss differences are already comparable."""
     k = list(keys) + list(extra)
-    b = (df[df.coalition == "base"].set_index(k)["score"].rename("base"))
+    b = (df[df.coalition == "base"].drop_duplicates(subset=k)
+         .set_index(k)["score"].rename("base"))
     out = df.join(b, on=k)
     out["gain"] = out["score"] - out["base"]
     out["rel_gain"] = np.where(out["task"] == "regression",
@@ -202,8 +207,16 @@ def main():
         sweep += s
         if (i + 1) % 500 == 0:
             print(f"  {i + 1}/{len(metas)}", flush=True)
-    df = add_ablation_gain(add_gain(pd.DataFrame(full)), a.model)
-    sw = add_ablation_gain(add_gain(pd.DataFrame(sweep), extra=("M",)), a.model, extra=("M",))
+    df, sw = pd.DataFrame(full), pd.DataFrame(sweep)
+    cell = ["dataset", "coalition", "split"]
+    dup = df.duplicated(subset=cell, keep="first")
+    if dup.any():
+        print(f"WARNING: {int(dup.sum())} duplicate (dataset, coalition, split) cells "
+              f"(same cell under two directories?); keeping the first of each")
+        df = df[~dup].reset_index(drop=True)
+    sw = sw.drop_duplicates(subset=cell + ["M"]).reset_index(drop=True)
+    df = add_ablation_gain(add_gain(df), a.model)
+    sw = add_ablation_gain(add_gain(sw, extra=("M",)), a.model, extra=("M",))
     df.to_csv(out / "scores.csv", index=False)
     sw.to_csv(out / "sweep.csv", index=False)
     print(f"{len(df)} cells, {len(sw)} sweep rows -> {out}")
