@@ -213,7 +213,7 @@ class ContextEnsemble:
                 overlaps.append(len(np.intersect1d(idx, prev)) / max(1, len(idx)))
             prev = idx
 
-            from experiments.views import relabel_categories, shipped_view
+            from experiments.views import MemberView, relabel_categories, shipped_view
             view = shipped_view(self.task, m) if self.view == "shipped" else None
             clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device,
                                    view=view)
@@ -223,14 +223,23 @@ class ContextEnsemble:
                 Xm_tr, Xm_te, cat_cols = relabel_categories(
                     Xm_tr, X_te, np.random.default_rng(self.seed * 1_000_003 + m))
                 self.n_categorical = len(cat_cols)
+            ym = y_tr[idx]
+            mv = None
+            if self.view == "shipped":
+                mv = MemberView(np.asarray(Xm_tr).shape[1], all_classes,
+                                np.random.default_rng(self.seed * 7_919 + m))
+                Xm_tr, Xm_te, ym = mv.transform(Xm_tr, Xm_te, ym)
             t0 = time.perf_counter()
-            clf.fit(Xm_tr, y_tr[idx])
+            clf.fit(Xm_tr, ym)
             t_fit += time.perf_counter() - t0
 
-            ref_classes = align_member(self, clf, m, ref_classes, all_classes)
+            ref_classes = align_member(self, mv.proxy(clf) if mv is not None else clf,
+                                       m, ref_classes, all_classes)
 
             t0 = time.perf_counter()
             p = clf.predict_members(Xm_te)          # (1, n_test[, C])
+            if mv is not None:
+                p = mv.restore(p)
             t_pred += time.perf_counter() - t0
             members.append(p[0])
             del clf

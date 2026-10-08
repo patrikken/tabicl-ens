@@ -341,18 +341,25 @@ class FeatureSubsampleEnsemble:
             usage[cols] += 1
 
         for m, cols in enumerate(subsets):
-            from experiments.views import shipped_view
+            from experiments.views import MemberView, shipped_view
             view = shipped_view(self.task, m) if self.view == "shipped" else None
             clf = member_estimator(self.task, self.checkpoint, self.seed + m, self.device,
                                    view=view)
+            Xm_tr, Xm_te, ym, mv = _take_columns(X_tr, cols), _take_columns(X_te, cols), y_tr, None
+            if self.view == "shipped":
+                mv = MemberView(len(cols), all_classes, np.random.default_rng(self.seed * 7_919 + m))
+                Xm_tr, Xm_te, ym = mv.transform(Xm_tr, Xm_te, y_tr)
             t0 = time.perf_counter()
-            clf.fit(_take_columns(X_tr, cols), y_tr)
+            clf.fit(Xm_tr, ym)
             t_fit += time.perf_counter() - t0
 
-            ref_classes = align_member(self, clf, m, ref_classes, all_classes)
+            ref_classes = align_member(self, mv.proxy(clf) if mv is not None else clf,
+                                       m, ref_classes, all_classes)
 
             t0 = time.perf_counter()
-            p = clf.predict_members(_take_columns(X_te, cols))   # (1, n_test, C)
+            p = clf.predict_members(Xm_te)   # (1, n_test, C)
+            if mv is not None:
+                p = mv.restore(p)
             t_pred += time.perf_counter() - t0
             members.append(p[0])
             del clf

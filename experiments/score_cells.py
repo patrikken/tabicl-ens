@@ -100,6 +100,39 @@ def _effective_members(task: str, mem: np.ndarray, y: np.ndarray) -> float:
     return float(M ** 2 / (R ** 2).sum())
 
 
+def full_prediction(d: Path, meta: dict, task: str, mem: np.ndarray, tau: float,
+                    model: str):
+    """What the cell predicts at full M, under the model's OWN aggregation rule.
+
+    Returns ``(prediction, rule, recipe_ok)``.
+      upstream  ``agg.npy``: the model's own aggregate (NNLS, pooling,
+                calibration included). Always preferred when present.
+      nnls      regression, NNLS weights recorded in meta -> ``w @ members``.
+      mean      plain mean (logits then softmax at ``tau``): exactly the
+                shipped rule for TabICLv2 and for TabFM without TabFM+ options.
+      mean      with ``recipe_ok=False``: the cell used TabFM+ options
+                (NNLS / probability pooling / calibration) that cannot be
+                replayed from members alone. Its score is the PLAIN-MEAN score
+                and must not be read as the TabFM+ recipe.
+    """
+    f = d / "agg.npy"
+    if model == "tabfm" and f.exists():
+        return np.load(f).astype(np.float64), "upstream", True
+    if model == "tabfm":
+        w = meta.get("nnls_weights")
+        if task == "regression" and meta.get("enable_nnls") and w is not None:
+            w = np.asarray(w, dtype=np.float64)
+            if w.shape[0] == mem.shape[0]:
+                return w @ mem, "nnls", True
+        plus = (meta.get("enable_nnls") or meta.get("average_logits") is False
+                or meta.get("calibration"))
+        if task != "regression" and plus:
+            return _combine(task, mem, tau), "mean", False
+        if task == "regression" and meta.get("enable_nnls"):
+            return _combine(task, mem, tau), "mean", False
+    return _combine(task, mem, tau), "mean", True
+
+
 def score_cell(d: Path, model: str, budgets=BUDGETS, reps=REPS):
     meta = json.loads((d / "meta.json").read_text())
     mem = np.load(d / "members.npy").astype(np.float32 if meta.get("task") != "regression"
@@ -115,10 +148,12 @@ def score_cell(d: Path, model: str, budgets=BUDGETS, reps=REPS):
     base = dict(dataset=meta["dataset"], coalition=meta["coalition"], split=meta["split"],
                 task=task, n_classes=C, n_train=meta.get("n_train"),
                 n_test=meta.get("n_test"), n_features=meta.get("n_features"))
+    pred, rule, recipe_ok = full_prediction(d, meta, task, mem, tau, model)
     full = dict(**base, M=M, m_req=meta.get("n_estimators_requested"),
                 truncated=meta.get("truncated"), severity=meta.get("split_severity"),
                 **health, meff=_effective_members(task, mem, yt),
-                score=cell_score(task, _combine(task, mem, tau), yt, C),
+                agg_rule=rule, recipe_ok=recipe_ok,
+                score=cell_score(task, pred, yt, C),
                 score_single=cell_score(task, _combine(task, mem[:1], tau), yt, C),
                 fit_s=meta.get("fit_seconds"), pred_s=meta.get("predict_seconds"),
                 y_train_std=meta.get("y_train_std"))

@@ -34,7 +34,9 @@ SETS: dict[str, list[str]] = {
     "withhold": [f"A4_g{g:02d}" for g in (25, 50, 75, 90)]
                 + [f"A5_f{f:02d}" for f in (25, 50, 75, 90)],
     "expand":   ["A8cross", "A8svd", "A8both"],
-    "plus":     ["plus_full", "plus_noexpand", "plus_nonnls", "plus_nocal"],
+    # plus_nonnls is NOT run: with default pooling it is bit-identical to S_A8both
+    # (same members, same aggregator), which the first campaign confirmed.
+    "plus":     ["plus_full", "plus_noexpand", "plus_nocal"],
     "new":      ["A7"],
     # shipped + one extra axis: the marginal value of each axis ON TOP of the
     # default ensemble. Read against ``shipped``; A7/A4/A5/A8 alone are read

@@ -111,3 +111,30 @@ dupd = pd.concat([sw2, sw2.iloc[:5]], ignore_index=True)
 g3 = sc.add_ablation_gain(sc.add_gain(dupd, extra=("M",)), "tabicl", extra=("M",))
 check(len(g3) == len(dupd), "duplicates in the input cannot multiply rows")
 print(f"{n_ok} checks passed (incl. cluster-crash regression)")
+
+# ---- TabFM+ recipe replay ---------------------------------------------------------
+root3 = Path(tempfile.mkdtemp()); rng3 = np.random.default_rng(5)
+yr = rng3.normal(size=100)
+memr = yr[None] + rng3.normal(scale=[[0.1], [0.5], [1.0]], size=(3, 100))     # member 0 is far better
+w = np.array([1.0, 0.0, 0.0])
+write(root3, "r", "plus_nnls", 0, memr, yr, task="regression", n_classes=None,
+      enable_nnls=True, nnls_weights=w.tolist())
+write(root3, "r", "plus_nonnls", 0, memr, yr, task="regression", n_classes=None)
+f_n, _ = sc.score_cell(root3 / "r/plus_nnls/split0", "tabfm")
+f_m, _ = sc.score_cell(root3 / "r/plus_nonnls/split0", "tabfm")
+check(f_n["agg_rule"] == "nnls" and f_n["recipe_ok"], "regression NNLS weights replayed from meta")
+check(np.isclose(f_n["score"], -np.sqrt(np.mean((memr[0] - yr) ** 2))), "NNLS score = RMSE of the weighted combination")
+check(f_m["agg_rule"] == "mean" and f_n["score"] > f_m["score"], "NNLS differs from the plain mean (it no longer collapses to it)")
+# classification TabFM+: unreplayable without agg.npy, exact with it
+yc3 = rng3.integers(0, 2, 80); lg3 = np.eye(2)[yc3][None] * 3 + rng3.normal(size=(4, 80, 2))
+write(root3, "c", "plus_full", 0, lg3.astype(np.float32), yc3, task="binary", n_classes=2, softmax_temperature=0.9,
+      enable_nnls=True, average_logits=False, calibration="platt")
+f_c, _ = sc.score_cell(root3 / "c/plus_full/split0", "tabfm")
+check(not f_c["recipe_ok"] and f_c["agg_rule"] == "mean", "classification TabFM+ without agg.npy is flagged unreplayable")
+agg = np.stack([1 - np.eye(2)[yc3][:, 1] * 0.9 - 0.05, np.eye(2)[yc3][:, 1] * 0.9 + 0.05], 1)   # a perfect-ish aggregate
+np.save(root3 / "c/plus_full/split0/agg.npy", agg.astype(np.float32))
+f_c2, _ = sc.score_cell(root3 / "c/plus_full/split0", "tabfm")
+check(f_c2["agg_rule"] == "upstream" and f_c2["recipe_ok"] and f_c2["score"] > .99, "agg.npy is used verbatim when present")
+f_t, _ = sc.score_cell(root3 / "c/plus_full/split0", "tabicl")
+check(f_t["agg_rule"] == "mean" and f_t["recipe_ok"], "TabICLv2 never uses agg.npy")
+print(f"{n_ok} checks passed (incl. recipe replay)")

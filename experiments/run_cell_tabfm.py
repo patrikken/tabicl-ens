@@ -111,6 +111,11 @@ def run_cell(dataset: str, coalition: str, n_estimators: int, out_root: Path,
         m_realised = int(members.shape[0])
         np.save(cell / "members.npy", members.astype(np.float32))
         np.save(cell / "y_test.npy", np.asarray(y_te))
+        # Upstream's OWN aggregate of these members (NNLS weights, probability
+        # vs logit pooling, calibration). Calibrators are not recoverable from
+        # the member tensor, so the TabFM+ recipe can only be scored from this.
+        np.save(cell / "agg.npy", np.asarray(clf.aggregate_members(members),
+                                             dtype=np.float64 if reg else np.float32))
 
         sev = split_severity(dataset, k)
         meta = {

@@ -3,13 +3,19 @@ import sys, types, numpy as np, pandas as pd
 sys.path.insert(0, ".")
 
 made = []                         # kwargs of every member estimator built
+fits = []                         # (column order, labels) of every fit
 class Stub:
     average_logits = True; softmax_temperature = 0.9
     def __init__(self, **kw): self.kw = kw; made.append(kw)
     def fit(self, X, y):
-        self.X = X; self.classes_ = np.unique(y); return self
+        self.X = X; self.classes_ = np.unique(y)
+        self.majority = np.bincount(np.searchsorted(self.classes_, y)).argmax()   # in the FITTED label space
+        fits.append((list(X.columns) if hasattr(X, "columns") else None, np.asarray(y).copy()))
+        return self
     def predict_members(self, X):
-        return np.zeros((1, len(X), len(self.classes_)))
+        out = np.zeros((1, len(X), len(self.classes_)))
+        out[..., self.majority] = 1.0          # always predicts the majority class it saw
+        return out
 ti = types.ModuleType("tabicl"); ti.TabICLClassifier = Stub; ti.TabICLRegressor = Stub
 sys.modules["tabicl"] = ti
 import experiments.capture as cap
@@ -26,7 +32,8 @@ def chk(c, m):
 # ---- views ----------------------------------------------------------------
 v0, v1 = V.shipped_view("classification", 0), V.shipped_view("classification", 1)
 chk(v0["norm_methods"] == ["none"] and v1["norm_methods"] == ["power"], "norm alternates none/power across members")
-chk(v0["feat_shuffle_method"] == "random" and v0["class_shuffle_method"] == "random", "classification view: feature + class permutation")
+chk(v0["feat_shuffle_method"] == "none" and v0["class_shuffle_method"] == "none",
+    "feature/class order are NOT estimator kwargs (a one-member estimator ignores them)")
 chk("class_shuffle_method" not in V.shipped_view("regression", 0), "regression view has no class axis (kwarg would raise upstream)")
 
 # ---- A7 relabelling ---------------------------------------------------------
@@ -58,14 +65,33 @@ ce = ContextEnsemble(n_estimators=4, seed=0, **C.CONTEXT_COALITIONS["S_ctl"])
 out = ce.fit_predict_members(Xtr, y, Xte)
 chk(out.shape == (4, 10, 3), "S_ctl: members shape")
 chk([k["norm_methods"][0] for k in made] == ["none", "power", "none", "power"], "S_ctl: shipped-style views reach the estimator")
-chk(all(k["feat_shuffle_method"] == "random" for k in made), "S_ctl: feature permutation on")
+cols_seen = [tuple(f[0]) for f in fits]
+chk(len(set(cols_seen)) > 1, f"S_ctl: members see different column orders ({len(set(cols_seen))} distinct of 4)")
+chk(len({f[1].tobytes() for f in fits}) > 1, "S_ctl: members see different class codings")
+chk(all(sorted(c) == sorted(Xtr.columns) for c in cols_seen), "S_ctl: column order changes, column set does not")
+# majority-class stub: every member must still vote for the ORIGINAL majority class after restore
+ymaj = np.where(rng.random(60) < 0.7, 2, rng.integers(0, 2, 60))
+fits.clear(); made.clear()
+out = ContextEnsemble(n_estimators=6, seed=3, **C.CONTEXT_COALITIONS["S_ctl"]).fit_predict_members(Xtr, ymaj, Xte)
+chk(out.shape == (6, 10, 3) and (out.argmax(-1) == 2).all(), "S_ctl: logits restored to the ORIGINAL class order")
+chk(len({f[1].tobytes() for f in fits}) > 1 and not all(np.array_equal(f[1], ymaj) for f in fits), "S_ctl: fitted labels really were permuted")
+fits.clear(); made.clear()
+FeatureSubsampleEnsemble(n_estimators=6, seed=3, **C.FEATURE_SUB_COALITIONS["S_A4_g90"]).fit_predict_members(
+    Xn0 := pd.DataFrame(rng.normal(size=(80, 20)), columns=[f"c{i}" for i in range(20)]), ymaj_n := np.where(rng.random(80) < .7, 1, 0), Xn0.iloc[:10])
+chk(len({tuple(f[0]) for f in fits}) > 1 and all(len(f[0]) == 18 for f in fits), "S_A4: subset size 18 of 20, orders differ")
+fits.clear(); made.clear()
+ContextEnsemble(n_estimators=4, seed=0, **C.CONTEXT_COALITIONS["S_ctl"]).fit_predict_members(Xtr, y, Xte)
 chk(ce.timings["context_size_mean"] == 60, "S_ctl: full context (frac=1.0 keeps every row)")
-made.clear()
-ContextEnsemble(n_estimators=2, seed=0, frac=.5, mode="random").fit_predict_members(Xtr, y, Xte)
+made.clear(); fits.clear()
+ContextEnsemble(n_estimators=3, seed=0, frac=.5, mode="random").fit_predict_members(Xtr, y, Xte)
 chk(all(k["feat_shuffle_method"] == "none" and k["norm_methods"] == ["none"] for k in made), "plain A5 unchanged: every axis off")
+chk(len({tuple(f[0]) for f in fits}) == 1, "plain A5 unchanged: column order untouched")
 made.clear()
 ce = ContextEnsemble(n_estimators=3, seed=0, **C.CONTEXT_COALITIONS["A7"]); ce.fit_predict_members(Xtr, y, Xte)
 chk(ce.timings["relabel"] and ce.timings["n_categorical"] == 2 and ce.timings["view"] == "none", "A7: relabel recorded, no shipped view")
+
+mvr = V.MemberView(5, None, np.random.default_rng(0))
+chk(mvr.class_perm is None and np.array_equal(mvr.restore(np.ones((1, 2, 3))), np.ones((1, 2, 3))), "regression view: columns only")
 
 # ---- FeatureSubsampleEnsemble wiring ------------------------------------------
 Xn = pd.DataFrame(rng.normal(size=(80, 20)), columns=[f"c{i}" for i in range(20)]); yn = rng.integers(0, 2, 80)
