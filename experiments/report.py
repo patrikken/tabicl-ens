@@ -123,7 +123,7 @@ def elo_panel(rows: pd.DataFrame, anchor: str, method_col: str = "coalition",
 # ------------------------------------------------------------------- tables --
 def build_tables(data: dict, boot: int) -> dict[str, pd.DataFrame]:
     out = {}
-    nat, wrap4, wrap5, ship = [], [], [], []
+    nat, wrap4, wrap5, ship, plus = [], [], [], [], []
     sweep_rows = []
     for m, (s, w) in data.items():
         eff = effect_table(s)
@@ -172,6 +172,19 @@ def build_tables(data: dict, boot: int) -> dict[str, pd.DataFrame]:
                     tb = tb.drop(index=ref, errors="ignore")
                     tb["model"], tb["task"], tb["panel"], tb["n_datasets"] = m, t, "control", info["n_datasets"]
                     ship.append(tb.reset_index())
+            # TabFM+ components, against shipped. Only cells whose recipe was replayed
+            # (load() drops the rest) and only when enough datasets remain to rank.
+            if m == "tabfm":
+                pc = [c for c in ("S_A8both", "plus_noexpand", "plus_full", "plus_nocal") if c in set(st.coalition)]
+                if len(pc) >= 1 and "shipped" in set(st.coalition):
+                    sub = st[st.coalition.isin(pc + ["shipped"])]
+                    ok = sub.groupby("coalition").dataset.nunique()
+                    keep = [c for c in pc if ok.get(c, 0) >= 5]
+                    if keep:
+                        tb, info = elo_panel(st[st.coalition.isin(keep + ["shipped"])], "shipped", boot=boot)
+                        tb = tb.drop(index="shipped", errors="ignore")
+                        tb["model"], tb["task"], tb["panel"], tb["n_datasets"] = m, t, "plus", info["n_datasets"]
+                        plus.append(tb.reset_index())
             # member-budget sweep
             wt = w[(w.task == t) & w.coalition.isin(["base"] + NATIVE)].copy()
             wt["method"] = np.where(wt.coalition == "base", "base", wt.coalition + "@" + wt.M.astype(str))
@@ -185,7 +198,7 @@ def build_tables(data: dict, boot: int) -> dict[str, pd.DataFrame]:
                 sweep_rows.append(tb)
     res = {k: pd.concat(v, ignore_index=True) for k, v in out.items()}
     for name, lst in (("elo_native", nat), ("elo_A4", wrap4), ("elo_A5", wrap5),
-                      ("elo_shipplus", ship), ("elo_vs_M", sweep_rows)):
+                      ("elo_shipplus", ship), ("elo_plus", plus), ("elo_vs_M", sweep_rows)):
         res[name] = pd.concat(lst, ignore_index=True) if lst else pd.DataFrame()
     return res
 
@@ -363,6 +376,35 @@ def fig_shipplus(T, out, plt):
     plt.close(fig)
 
 
+PLUS_LAB = {"S_A8both": "expansion only\n(no NNLS)", "plus_noexpand": "NNLS +\nprob. pooling\n+ calibration",
+            "plus_full": "TabFM+ (all)", "plus_nocal": "TabFM+\nwithout calibration"}
+
+
+def fig_plus(T, out, plt):
+    """TabFM+ components on top of shipped (tasks whose recipe could be replayed)."""
+    d = T["elo_plus"]
+    # a task needs the full TabFM+ recipe to be replayable, or the panel is one lone bar
+    tasks = [t for t in TASKS if ((d.task == t) & (d.method == "plus_full")).any()]
+    if not tasks:
+        return
+    fig, axs = plt.subplots(1, len(tasks), figsize=(3.4 * len(tasks), 2.9), squeeze=False)
+    for ax, t in zip(axs[0], tasks):
+        sub = d[d.task == t].set_index("method")
+        names = [c for c in PLUS_LAB if c in sub.index]
+        x = np.arange(len(names))
+        y, lo, hi = (sub[c].reindex(names).to_numpy() for c in ("elo", "lo", "hi"))
+        ax.bar(x, y, color=COL["tabfm"], width=0.7, zorder=2)
+        ax.errorbar(x, y, yerr=[y - lo, hi - y], fmt="none", ecolor=INK2, lw=0.9, capsize=0, zorder=3)
+        ax.axhline(0, color=INK2, lw=0.8)
+        ax.set_xticks(x)
+        ax.set_xticklabels([PLUS_LAB[c] for c in names], fontsize=7)
+        ax.set_ylabel("TabFM: Elo vs shipped")
+        _despine(ax)
+    fig.tight_layout(w_pad=1.4)
+    _save(fig, out, "fig_plus")
+    plt.close(fig)
+
+
 def fig_elo_vs_M(T, out, plt):
     d = T["elo_vs_M"]
     tasks = [t for t in TASKS if (d.task == t).any()]
@@ -536,6 +578,8 @@ def main(argv=None):
         fig_wrappers(T, out, plt)
     if len(T["elo_shipplus"]):
         fig_shipplus(T, out, plt)
+    if len(T["elo_plus"]):
+        fig_plus(T, out, plt)
     if len(T["elo_vs_M"]):
         fig_elo_vs_M(T, out, plt)
     fig_gap(T, out, plt)
